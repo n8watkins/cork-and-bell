@@ -99,6 +99,87 @@ body.pointer #stage {
   max-width: 44ch;
 }
 
+/* The round's two challenges: slips of paper under the title, ticked in red when done. */
+#tasks {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+  justify-items: start;
+  text-shadow: none;
+}
+#tasks li {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 3px 9px 4px 6px;
+  border-radius: 4px;
+  background: rgba(241, 227, 191, 0.94);
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.2;
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.45), inset 0 0 0 1px rgba(156, 43, 32, 0.55);
+}
+#tasks li i {
+  flex: none;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1.5px rgba(28, 20, 16, 0.6);
+  position: relative;
+}
+#tasks li b {
+  font: 400 13px/1 var(--display);
+  color: var(--red);
+  white-space: nowrap;
+}
+#tasks li.done {
+  background: rgba(226, 214, 180, 0.9);
+  animation: task-done 0.7s ease-out;
+}
+#tasks li.done span {
+  text-decoration: line-through;
+  text-decoration-color: var(--red);
+  opacity: 0.7;
+}
+#tasks li.done i {
+  background: var(--red);
+  box-shadow: none;
+}
+#tasks li.done i::after {
+  content: "";
+  position: absolute;
+  left: 4px;
+  top: 1.5px;
+  width: 3.5px;
+  height: 7px;
+  border: solid #fff6e2;
+  border-width: 0 1.8px 1.8px 0;
+  transform: rotate(40deg);
+}
+@keyframes task-done {
+  0% {
+    transform: scale(1);
+  }
+  25% {
+    transform: scale(1.14) rotate(-2deg);
+    background: #fff6e2;
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+/* With room to spare (a desktop, a tablet) the two slips lie side by side, clear of the chalk board. */
+@media (min-width: 601px) and (min-height: 501px) {
+  #tasks {
+    grid-auto-flow: column;
+    gap: 8px;
+    margin-top: 6px;
+  }
+}
+
 #controls {
   position: absolute;
   right: max(16px, env(safe-area-inset-right));
@@ -106,25 +187,175 @@ body.pointer #stage {
   display: flex;
   gap: 8px;
 }
+/* The sound switch says what it is doing, with a loudspeaker that is crossed out or ringing. */
+#hud .sound {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.sound .ico {
+  width: 20px;
+  height: 20px;
+  flex: none;
+}
+.sound[aria-pressed="true"] .mute,
+.sound[aria-pressed="false"] .waves {
+  display: none;
+}
 #sound[aria-pressed="false"] {
   border-color: var(--gold);
   color: #fff3d0;
 }
 
-/* The tally: a painted ticket, bottom left, out of the way of the targets. */
-#tally {
+/* The start board: painted like the end card, along the bottom, while the house plays behind it.
+   Three plain choices: play alone, a battle with friends, and the sound. */
+#start {
   position: absolute;
-  left: max(16px, env(safe-area-inset-left));
-  bottom: max(14px, env(safe-area-inset-bottom));
-  display: flex;
-  gap: 2px;
-  background: rgba(241, 227, 191, 0.94);
+  left: 50%;
+  bottom: max(16px, env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  width: min(calc(100vw - 32px), 800px);
+  display: grid;
+  gap: 10px;
+  padding: 14px 16px 16px;
+  border-radius: 8px;
+  background: #f1e3bf;
   color: var(--ink);
-  border-radius: 6px;
-  padding: 6px 4px;
+  pointer-events: auto;
+  box-shadow: 0 14px 44px rgba(0, 0, 0, 0.55), inset 0 0 0 2px var(--red), inset 0 0 0 5px #f1e3bf, inset 0 0 0 6px rgba(210, 162, 60, 0.9);
+}
+#start header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 0 4px;
+}
+#start h2 {
+  margin: 0;
+  font: 400 26px/1 var(--display);
+  color: var(--red);
+  white-space: nowrap;
+}
+/* "Free play", winking like the credit lamp on a cabinet. */
+#start-credit {
+  display: inline-block;
+  margin-left: 10px;
+  padding: 3px 8px 4px;
+  border-radius: 3px;
+  box-shadow: inset 0 0 0 1.5px var(--red);
+  font: 700 11px/1 var(--text);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  vertical-align: 0.5em;
+  animation: wink 1.6s steps(1) infinite;
+}
+@keyframes wink {
+  0%,
+  100% {
+    background: var(--red);
+    color: #fff6e2;
+  }
+  55% {
+    background: transparent;
+    color: var(--red);
+  }
+}
+#start header p {
+  margin: 0;
+  font-size: 14px;
+  opacity: 0.8;
+  text-align: right;
+}
+#start .choices {
+  display: grid;
+  grid-template-columns: 1fr 1.25fr 1fr;
+  gap: 10px;
+}
+#hud #start button {
+  display: grid;
+  align-content: center;
+  gap: 3px;
+  min-height: 64px;
+  padding: 9px 16px 10px;
+  border-radius: 10px;
+  border: 1.5px solid rgba(28, 20, 16, 0.55);
+  background: rgba(255, 250, 235, 0.55);
+  color: var(--ink);
+  text-align: left;
+}
+#hud #start button:hover {
+  border-color: var(--ink);
+}
+#start button b {
+  font: 400 21px/1.1 var(--display);
+}
+#start button small {
+  font-size: 13px;
+  line-height: 1.25;
+  opacity: 0.82;
+}
+#hud #start button.primary {
+  background: var(--red);
+  border-color: var(--red);
+  color: #fff6e2;
+}
+#hud #start button.primary:hover {
+  background: #ad3226;
+}
+#hud #start button.sound {
+  grid-template-columns: auto 1fr;
+  column-gap: 12px;
+  align-items: center;
+}
+#start .sound .ico {
+  grid-row: 1 / span 2;
+  width: 30px;
+  height: 30px;
+}
+#start .sound b {
+  align-self: end;
+}
+#start .sound small {
+  align-self: start;
+}
+#hud #start button.sound[aria-pressed="false"] {
+  border-color: #a9791c;
+  background: rgba(210, 162, 60, 0.28);
+}
+#hud #start button.sound[aria-pressed="true"] {
+  border-color: #1f5f3a;
+  color: #1f5f3a;
+}
+
+/* The tally: a paper ticket, bottom left. Time and score are the big figures; the run and the
+   corks left sit on the stub below the perforation. Its size comes from the room there is to the
+   left of the cork tray (--tray-left, set from the picture), so it never lies over the tray. */
+#tally {
+  --left: max(16px, env(safe-area-inset-left));
+  --room: calc(var(--tray-left, 330px) - var(--left) - 10px);
+  position: absolute;
+  left: var(--left);
+  bottom: max(14px, env(safe-area-inset-bottom));
+  font-size: clamp(8.5px, calc(var(--room) / 13.2), 17px);
+  width: 13.2em;
+  container: tally / inline-size;
+  display: grid;
+  background: rgba(241, 227, 191, 0.96);
+  color: var(--ink);
+  border-radius: 0.4em;
+  padding: 0.5em 0.45em 0.4em;
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.5), inset 0 0 0 1.5px var(--red), inset 0 0 0 3px rgba(241, 227, 191, 1), inset 0 0 0 4px rgba(156, 43, 32, 0.5);
 }
+/* Hidden means hidden, whatever a layout rule further down says about display. */
+#hud [hidden] {
+  display: none !important;
+}
 #tally[hidden],
+#start[hidden],
+#controls[hidden],
+#hud button[hidden],
+#run-times[hidden],
 #rivals[hidden],
 #banner[hidden],
 #count[hidden],
@@ -132,31 +363,92 @@ body.pointer #stage {
 #net[hidden] {
   display: none;
 }
-#tally .cell {
+#tally .row {
+  display: flex;
+}
+#tally .main .cell {
+  flex: 1 1 0;
   display: grid;
   justify-items: center;
-  min-width: 62px;
-  padding: 2px 8px;
-  border-right: 1px dotted rgba(28, 20, 16, 0.4);
+  align-content: center;
+  min-width: 0;
+  padding: 0.1em 0.2em 0.3em;
 }
-#tally .cell:last-child {
-  border-right: 0;
+#tally #time-cell {
+  flex: 0 0 5.3em;
+  border-radius: 0.2em;
+}
+#tally #score-cell {
+  border-left: 1px dotted rgba(28, 20, 16, 0.45);
 }
 #tally .label {
-  font-size: 10.5px;
+  font-size: max(0.72em, 8px);
+  font-weight: 700;
   letter-spacing: 0.12em;
   text-transform: uppercase;
-  opacity: 0.7;
+  line-height: 1.3;
+  color: #5a2018;
 }
 #tally .num {
-  font: 400 23px/1.1 var(--display);
+  font: 400 2.15em/1.02 var(--display);
   font-variant-numeric: tabular-nums;
+}
+#tally .fig {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.3em;
+}
+/* The stub: label and figure on one line, each taking the room its words need. On the smallest
+   phones, where the ticket is narrow, the run and the corks each get a line. */
+@container tally (max-width: 150px) {
+  #tally .row.stub {
+    flex-direction: column;
+    align-items: center;
+  }
+}
+#tally .stub {
+  justify-content: space-around;
+  column-gap: 0.6em;
+  margin-top: 0.3em;
+  padding: 0.3em 0.15em 0;
+  border-top: 1.5px dashed rgba(28, 20, 16, 0.45);
+}
+#tally .stub .cell {
+  display: flex;
+  align-items: baseline;
+  gap: 0.35em;
+  white-space: nowrap;
+}
+#tally .stub .num {
+  font-size: 1.45em;
+}
+#tally .stub .label {
+  line-height: 1;
+}
+/* Where the tray leaves too little room beside it on a tall screen (a tablet, a squarer window),
+   the ticket keeps its size and sits just above the tray instead (--tray-top, from the picture). */
+#tally.raised {
+  font-size: 15px;
+  bottom: calc(var(--tray-top, 0px) + 10px);
+}
+#tally .times {
+  align-self: center;
+  padding: 0.14em 0.42em 0.18em;
+  border-radius: 999px;
+  background: var(--red);
+  color: #fff6e2;
+  font: 400 max(0.86em, 9px) / 1 var(--display);
 }
 #run-cell.hot .num {
   color: var(--red);
 }
-#time.late {
-  color: var(--red);
+/* The last ten seconds: the time is painted red. */
+#time-cell.late {
+  background: var(--red);
+  color: #fff6e2;
+}
+#time-cell.late .label {
+  color: #fff6e2;
 }
 
 /* Rivals: enamel tokens. Tap one to send your attacks there. */
@@ -285,6 +577,85 @@ body.pointer #stage {
   letter-spacing: 0.06em;
   text-align: center;
 }
+/* A ricochet: a paper flag over the points, a bigger figure, and it hangs in the air longer. */
+#pops span.flagged {
+  font-size: 46px;
+  color: #fff;
+  text-align: center;
+  z-index: 1;
+  animation: pop-flag 2.05s ease-out forwards;
+}
+#pops span.flagged.big {
+  font-size: 56px;
+}
+/* The ring of gold that opens out from a ricochet's target. */
+#pops i.ring {
+  position: absolute;
+  width: 150px;
+  height: 150px;
+  margin: -75px 0 0 -75px;
+  border-radius: 50%;
+  border: 3px solid #ffd35a;
+  box-shadow: 0 0 0 6px rgba(255, 211, 90, 0.25), inset 0 0 0 2px rgba(156, 43, 32, 0.6);
+  animation: ring 0.75s cubic-bezier(0.2, 0.7, 0.3, 1) forwards;
+}
+@keyframes ring {
+  0% {
+    opacity: 0.95;
+    transform: scale(0.12);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.25);
+  }
+}
+#pops span em {
+  display: block;
+  width: max-content;
+  margin: 0 auto 5px;
+  padding: 4px 14px 5px;
+  border-radius: 3px;
+  background: var(--cream);
+  color: var(--red);
+  font: italic 700 0.48em/1.1 "Playfair Display", var(--text);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  text-shadow: none;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.55), inset 0 0 0 1.5px var(--red);
+  transform: rotate(-4deg);
+}
+#pops span em b {
+  margin-left: 0.35em;
+  font: 400 1.3em/1 var(--display);
+  letter-spacing: 0;
+  vertical-align: -0.04em;
+}
+@keyframes pop-flag {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -40%) scale(0.3) rotate(-8deg);
+  }
+  7% {
+    opacity: 1;
+    transform: translate(-50%, -78%) scale(1.28) rotate(3deg);
+  }
+  13% {
+    transform: translate(-50%, -80%) scale(0.94) rotate(-2deg);
+  }
+  19% {
+    transform: translate(-50%, -82%) scale(1.04) rotate(0deg);
+  }
+  25% {
+    transform: translate(-50%, -84%) scale(1);
+  }
+  82% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -150%) scale(1);
+  }
+}
 @keyframes pop {
   0% {
     opacity: 0;
@@ -383,6 +754,8 @@ body.pointer #stage {
   top: 50%;
   transform: translate(-50%, -50%);
   width: min(92vw, 440px);
+  max-height: calc(100% - 16px);
+  overflow-y: auto;
   padding: 20px 22px 18px;
   border-radius: 8px;
   background: #f1e3bf;
@@ -390,6 +763,18 @@ body.pointer #stage {
   pointer-events: auto;
   box-shadow: 0 20px 70px rgba(0, 0, 0, 0.6), inset 0 0 0 2px var(--red), inset 0 0 0 5px #f1e3bf, inset 0 0 0 6px rgba(210, 162, 60, 0.9);
   text-align: center;
+}
+/* Under the lobby and the end card, the rest of the HUD steps back. */
+body.carded #tasks,
+body.lobby #title,
+body.lobby #controls,
+body.lobby #turn,
+body.lobby #tally,
+body.lobby #rivals,
+body.lobby #banner,
+body.carded #turn,
+body.carded #rivals {
+  visibility: hidden;
 }
 #card h2 {
   margin: 0 0 10px;
@@ -433,6 +818,76 @@ body.pointer #stage {
   margin: 6px 0 12px;
   font-size: 14.5px;
   opacity: 0.85;
+}
+/* A score that makes the board: three letters, as on an arcade cabinet. */
+#initials {
+  margin: 4px 0 10px;
+  padding: 10px 12px 8px;
+  border-radius: 6px;
+  background: rgba(210, 162, 60, 0.22);
+  box-shadow: inset 0 0 0 1.5px rgba(156, 43, 32, 0.55);
+}
+#initials label {
+  display: block;
+  font-size: 15px;
+}
+#initials .letters {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+  align-items: stretch;
+  margin-top: 8px;
+}
+#initials input {
+  width: 4.1em;
+  padding: 2px 0 4px 0.28em;
+  border: 0;
+  border-bottom: 3px solid var(--red);
+  border-radius: 4px 4px 0 0;
+  background: #fffaf0;
+  color: var(--ink);
+  font: 400 34px/1.1 var(--display);
+  letter-spacing: 0.28em;
+  text-align: center;
+  text-transform: uppercase;
+  -webkit-user-select: text;
+  user-select: text;
+}
+#initials input:focus-visible {
+  outline: 3px solid var(--gold);
+  outline-offset: 2px;
+}
+#initials input::placeholder {
+  color: rgba(28, 20, 16, 0.22);
+}
+#hud #card #initials p:empty {
+  display: none;
+}
+#hud #card #initials p {
+  margin: 6px 0 0;
+  font-size: 13.5px;
+  color: var(--red);
+  opacity: 1;
+}
+/* The top of the board: the card's title is gold on red for the occasion. */
+#card.record h2 {
+  margin: -6px -8px 10px;
+  padding: 8px 8px 10px;
+  border-radius: 5px;
+  background: var(--red);
+  color: #ffe9ae;
+  animation: record 0.9s ease-out;
+}
+@keyframes record {
+  0% {
+    transform: scale(0.7) rotate(-3deg);
+  }
+  40% {
+    transform: scale(1.08) rotate(1deg);
+  }
+  100% {
+    transform: scale(1);
+  }
 }
 .card-actions {
   display: flex;
@@ -496,16 +951,28 @@ body.pointer #stage {
     flex-direction: column;
     align-items: flex-end;
   }
-  #tally .cell {
-    min-width: 50px;
-    padding: 2px 6px;
+  #start {
+    padding: 12px 12px 12px;
   }
-  #tally .num {
-    font-size: 20px;
+  #start header {
+    display: grid;
+    gap: 3px;
+    justify-content: start;
+  }
+  #start header p {
+    text-align: left;
+    font-size: 13px;
+  }
+  #start .choices {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+  #hud #start button {
+    min-height: 58px;
   }
   #rivals {
     top: auto;
-    bottom: max(78px, calc(env(safe-area-inset-bottom) + 78px));
+    bottom: max(92px, calc(env(safe-area-inset-bottom) + 92px));
     right: 8px;
     left: 8px;
     grid-auto-flow: column;
@@ -526,8 +993,9 @@ body.pointer #stage {
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+  /* Under the challenge slips and the sound switch, not across them. */
   #banner {
-    top: 12%;
+    top: max(12%, 132px);
     font-size: 13.5px;
   }
   #banner b {
@@ -544,22 +1012,134 @@ body.pointer #stage {
     font-size: 11.5px;
     max-width: 30ch;
   }
+  #tasks {
+    margin-top: 5px;
+    gap: 3px;
+  }
+  #tasks li {
+    padding: 2px 7px 3px 5px;
+    font-size: 11.5px;
+    gap: 5px;
+  }
+  #tasks li b {
+    font-size: 12px;
+  }
+  #tasks li i {
+    width: 11px;
+    height: 11px;
+  }
+  #tasks li.done i::after {
+    left: 3.4px;
+    top: 1.2px;
+    width: 3px;
+    height: 6px;
+  }
   #hud #controls button {
     padding: 8px 12px;
     font-size: 12.5px;
   }
   #tally {
-    padding: 4px 3px;
+    --left: max(10px, env(safe-area-inset-left));
+    bottom: max(10px, env(safe-area-inset-bottom));
+    font-size: clamp(8px, calc(var(--room) / 13.2), 17px);
   }
-  #tally .cell {
-    min-width: 42px;
-    padding: 1px 6px;
+  /* The start board lies low: one line of words, then the three choices in a row. */
+  #start {
+    bottom: max(10px, env(safe-area-inset-bottom));
+    gap: 7px;
+    padding: 9px 12px 11px;
   }
-  #tally .label {
-    font-size: 9px;
+  #start header {
+    display: flex;
+    justify-content: space-between;
   }
-  #tally .num {
-    font-size: 18px;
+  #start h2 {
+    font-size: 19px;
+  }
+  #start header p {
+    font-size: 12.5px;
+    text-align: right;
+  }
+  #start .choices {
+    grid-template-columns: 1fr 1.25fr 1fr;
+    gap: 8px;
+  }
+  #hud #start button {
+    min-height: 54px;
+    padding: 6px 12px 7px;
+  }
+  #start button b {
+    font-size: 17px;
+  }
+  #start button small {
+    font-size: 11.5px;
+  }
+  #start .sound .ico {
+    width: 24px;
+    height: 24px;
+  }
+  #hud #start button.sound {
+    column-gap: 9px;
+  }
+  /* The end card lies low too: four stalls and the buttons fit without scrolling. */
+  #card {
+    width: min(92vw, 520px);
+    padding: 12px 18px 12px;
+  }
+  #card h2 {
+    margin-bottom: 6px;
+    font-size: 24px;
+  }
+  #card ol {
+    gap: 2px;
+    margin-bottom: 6px;
+  }
+  #card li {
+    padding: 3px 8px;
+    font-size: 15px;
+  }
+  #card li b {
+    font-size: 20px;
+  }
+  #card li small {
+    font-size: 11.5px;
+  }
+  #card p {
+    margin: 4px 0 8px;
+    font-size: 13px;
+  }
+  #hud #card button {
+    min-height: 44px;
+    padding: 9px 20px;
+    font-size: 16px;
+  }
+  #initials {
+    margin: 2px 0 6px;
+    padding: 6px 10px 5px;
+  }
+  #initials label {
+    font-size: 13.5px;
+  }
+  #initials .letters {
+    margin-top: 5px;
+  }
+  #initials input {
+    font-size: 26px;
+  }
+  #hud #card #initials p {
+    margin-top: 3px;
+    font-size: 12.5px;
+  }
+  #pops span.flagged {
+    font-size: 36px;
+  }
+  #pops span.flagged.big {
+    font-size: 44px;
+  }
+  #pops i.ring {
+    width: 110px;
+    height: 110px;
+    margin: -55px 0 0 -55px;
   }
   #rivals {
     top: max(52px, calc(env(safe-area-inset-top) + 48px));
@@ -591,18 +1171,71 @@ body.pointer #stage {
   }
 }
 
+/* An upright phone: the tray is in the middle of the picture, so the ticket is one row across the
+   bottom, all four figures the same size. */
+@media (orientation: portrait) and (max-width: 600px) {
+  #tally,
+  #tally.raised {
+    left: max(12px, env(safe-area-inset-left));
+    right: max(12px, env(safe-area-inset-right));
+    bottom: max(14px, env(safe-area-inset-bottom));
+    width: auto;
+    font-size: 14.5px;
+    display: flex;
+    padding: 0.5em 0.3em 0.45em;
+  }
+  #tally .row {
+    display: contents;
+  }
+  #tally .row .cell,
+  #tally #time-cell {
+    flex: 1 1 0;
+    display: grid;
+    justify-items: center;
+    align-content: center;
+    gap: 0;
+    min-width: 0;
+    margin: 0;
+    padding: 0.1em 0.2em 0.2em;
+    border: 0;
+    border-left: 1px dotted rgba(28, 20, 16, 0.45);
+    border-radius: 0;
+  }
+  #tally #score-cell {
+    flex-grow: 1.25;
+  }
+  #tally #time-cell {
+    border-left: 0;
+    border-radius: 0.2em;
+  }
+  #tally .num,
+  #tally .stub .num {
+    font-size: 1.95em;
+  }
+  #tally .times {
+    font-size: 0.95em;
+  }
+}
+
 /* A phone held upright still plays, with a quiet word that sideways is better. */
 #turn {
   display: none;
 }
 @media (orientation: portrait) and (max-width: 600px) and (pointer: coarse) {
+  body[data-screen="start"] #turn {
+    bottom: max(312px, calc(env(safe-area-inset-bottom) + 312px));
+  }
+  /* In a battle the rivals' tokens stand on the ticket; the word goes above them. */
+  body[data-screen="battle"] #turn {
+    bottom: max(222px, calc(env(safe-area-inset-bottom) + 222px));
+  }
   #turn {
     display: flex;
     align-items: center;
     gap: 8px;
     position: absolute;
     left: 50%;
-    bottom: max(168px, calc(env(safe-area-inset-bottom) + 168px));
+    bottom: max(92px, calc(env(safe-area-inset-bottom) + 92px));
     transform: translateX(-50%);
     white-space: nowrap;
     padding: 6px 12px;
@@ -634,7 +1267,22 @@ body.pointer #stage {
   #turn i {
     animation: none;
   }
-  #pops span {
-    animation-duration: 0.01s;
+  /* No rising and fading: the points simply stand over the target until they are cleared away. */
+  #pops span,
+  #pops span.flagged {
+    animation: none;
+    transform: translate(-50%, -110%);
+  }
+  #pops i.ring {
+    display: none;
+  }
+  #tasks li.done {
+    animation: none;
+  }
+  #card.record h2 {
+    animation: none;
+  }
+  #start-credit {
+    animation: none;
   }
 }

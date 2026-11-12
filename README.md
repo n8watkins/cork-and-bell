@@ -40,18 +40,21 @@ An upright phone still plays, with its own framing and a hint to turn it.
 
 | Address | What you get |
 | --- | --- |
-| `/cork-and-bell/` | The stall. The house plays until you move the pointer; your first click fires. |
+| `/cork-and-bell/` | The stall, with the start board: play alone, battle with friends, sound. The house plays behind it; a click or a touch on a target takes the gun and fires at once. |
 | `?auto=1` | The bot keeps playing (the attract mode, for a solo look). |
 | `?seed=7` | A repeatable run. |
 | `?t=41&auto=1&seed=7` | The picture frozen at round time 41 s. |
 | `?state=last`, `end`, `jam`, `moths`, `dark` | The fast last stretch, the end card, or one attack on its own. |
-| `?view=wide`, `mech`, `far`, `front`, `gun` | Other cameras. |
+| `?view=wide`, `mech`, `far`, `front`, `gun`, `board` | Other cameras (`board` looks at the high scores). |
+| `?state=end&score=5120` | The end card with that score, to try the high score entry. |
 | `?view=four` | Four stalls side by side with a bot in each: the battle as a shared screen shows it, with no room needed. |
 | `?join=4821` | The lobby with a PIN filled in (this is what the QR code opens). |
 | `?quality=low` or `high` | Lens and shadow quality (phones start on low). |
 | `?grid=row` | With four stalls on a shared screen: one row of four upright stalls instead of two rows of two. |
 
-A battle: press **Play a battle**, then **Make a room** (you play on this device) or **Use this screen as the shared screen** (a laptop or television shows every stall; players join on their phones with the PIN or the QR code).
+Sound is off until you turn it on: **Sound is off** on the start board, the **Sound: off** switch at the top right during a round, or the M key.
+
+A battle: press **Battle with friends**, then **Make a room** (you play on this device) or **Use this screen as the shared screen** (a laptop or television shows every stall; players join on their phones with the PIN or the QR code).
 
 ## The rules of the medium
 
@@ -72,7 +75,11 @@ Decided before any code, and kept everywhere.
 - Point and click (or drag and release on a phone). The cork flies a real arc: it is sighted in for the front row and drops beyond it, so the far row needs a higher aim.
 - The lever takes half a second to cock. Seventy corks a round. A dead-centre hit earns the cork back.
 - Front row teapots 10, chain stars 25, pendulum moons 50, the shutter star 100, the bell 15.
-- A run of 4 hits doubles, a run of 8 trebles. A ricochet hit doubles. Dead centre is worth half as much again.
+- A run of 4 hits doubles, a run of 8 trebles. A ricochet hit (the cork has already bounced off something) trebles on top of that. Dead centre is worth half as much again.
+- The ticket at the bottom left shows the time and the score, with the run (and what it multiplies by) and the corks left on its stub. It keeps clear of the cork tray on every screen shape.
+- Two challenges are chalked up each round (the same two for every stall in a battle), 75 to 150 extra each: five in a row, a ricochet onto a star, put out a lamp, and so on.
+- Everything in the stall answers a cork, for no points: lamps go out with a tinkle, the prizes on the shelf rock and fall, the chalk board smudges, the drive rings. A cork aimed over the top flies over the top.
+- The chalk board on the left wall is the high score board: everybody's ten best, kept by the server (`/api/party/scores/cork-and-bell`), with the house's own players among them. A solo score that makes it asks for three letters. Each device also keeps its own best, and the game plays on with that if the board cannot be reached.
 - Hits fill the bell's ring of lamps. When it is full the bell is live: ring it for 100.
 - The round is 90 seconds and the machine speeds up all the way through.
 
@@ -99,6 +106,7 @@ Decided before any code, and kept everywhere.
 | `game/shared/battle.js` | The battle as a party kit game: inputs, bots, attacks, blocks, snapshots. |
 | `game/session.js` | A round as the browser sees it: local (solo, attract) or following a room. |
 | `game/view/` | The picture: the lens (`render.js`), the stall (`stall.js`), hand-painted textures (`paint.js`). |
+| `game/scores.js` | The high scores: the server's board, this device's own best, and what the chalk board shows. |
 | `game/audio.js` | Every sound, made in WebAudio. Silent until you enable it. |
 | `game/baked/` | The Cycles bake: `set.glb`, albedo, two light maps, and the environment the moving things reflect. |
 | `game/vendor/` | three.js r186, local. |

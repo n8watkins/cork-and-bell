@@ -3,13 +3,15 @@
 // drawn from the seed and the shot's number.
 //
 // Time `t` is round time in seconds (0 at the opening bell, negative during the count-in).
-import { BACK, BELL, CHAIN, COUNTER, HALF_W, JAM, PENDULUMS, PENDULUM_RATE, PLATES, ROWS, SHUTTER, STEPS, STEP_LEFT, muzzle } from "./layout.js";
+import { BACK, BELL, CHAIN, CHALK_BOARD, COUNTER, DRIVE, HALF_W, JAM, LAMPS, PENDULUMS, PENDULUM_RATE, PLATES, ROWS, SHUTTER, STEPS, STEP_LEFT, VASES, WALL_TOP, muzzle } from "./layout.js";
 
 export const DT = 1 / 120;
 export const ROUND_SECONDS = 90;
 export const COCK_SECONDS = 0.5;
 export const CORKS_PER_ROUND = 70;
 export const BELL_FULL = 8;
+/** A hit by a cork that has already bounced off something pays this many times over. */
+export const RICOCHET_TIMES = 3;
 export const CORK_SPEED = 9.2;
 export const CORK_R = 0.012;
 const GRAVITY = 9.81;
@@ -17,6 +19,11 @@ const DRAG = 0.045;
 const RESET_EVERY = 5.2; // mechanism seconds between lifts of the cam bar
 const STUN_SECONDS = 2.4;
 export const JAM_MAX_SECONDS = 9;
+/** A lamp a cork has struck stays out this long, then flickers back on. */
+export const LAMP_OUT_SECONDS = 7;
+/** A prize rocks at the first knock; this many has it off the shelf. */
+const VASE_KNOCKS = 2;
+const WHEELS = [DRIVE.flywheel, ...DRIVE.wheels];
 
 function hash(a, b) {
   let h = Math.imul(a ^ 0x9e3779b9, 0x85ebca6b) ^ Math.imul(b + 0x7f4a7c15, 0xc2b2ae35);
@@ -26,6 +33,30 @@ function hash(a, b) {
   h = Math.imul(h, 0x297a2d39);
   h ^= h >>> 15;
   return (h >>> 0) / 4294967296;
+}
+
+/**
+ * The mini challenges. Two are chalked up each round, picked from the round's seed, so every
+ * stall in a battle has the same two. Doing one pays its bonus once.
+ */
+export const TASKS = [
+  { id: "five", text: "Five hits in a row", bonus: 100 },
+  { id: "rico-star", text: "Ricochet onto a star", bonus: 150 },
+  { id: "lamp", text: "Put out a lamp", bonus: 75 },
+  { id: "bell", text: "Ring the live bell", bonus: 150 },
+  { id: "moons", text: "Hit both moons", bonus: 150 },
+  { id: "shutter", text: "The shutter star", bonus: 100 },
+  { id: "centres", text: "Three dead centres", bonus: 150 },
+  { id: "prize", text: "Knock a prize down", bonus: 100 },
+  { id: "pots", text: "All five teapots down", bonus: 150 },
+];
+
+/** The two challenges of the round with this seed, as indexes into TASKS. */
+export function tasksFor(seed) {
+  const a = Math.floor(hash(seed >>> 0, 7001) * TASKS.length);
+  let b = Math.floor(hash(seed >>> 0, 7002) * (TASKS.length - 1));
+  if (b >= a) b += 1;
+  return [a, b];
 }
 
 /** Mechanism time: the machine speeds up as the round goes on. */
@@ -99,8 +130,16 @@ export function camLift(t) {
   return f < 0.45 ? f / 0.45 : -1;
 }
 
+/** The top edge of the back board at x: a rail, with the arched pediment in the middle. */
+export function backTop(x) {
+  const half = BACK.archHalfW + 0.08;
+  const rail = BACK.top + 0.1;
+  return Math.abs(x) < half ? rail + (BACK.archH + 0.02) * Math.sqrt(1 - (x / half) ** 2) : rail;
+}
+
 function stepTop(z, x) {
   if (z > COUNTER.zFront + 0.3) return -5; // off the front of the stall: gone
+  if (Math.abs(x) > HALF_W || z < BACK.z) return -5; // over a wall or the back board: gone
   if (z > COUNTER.zBack) return COUNTER.top;
   if (z > STEPS[0].zFront || x < STEP_LEFT) return 0; // the floor, and the gap the drive runs in
   if (z > STEPS[1].zFront) return STEPS[0].top;
@@ -169,6 +208,13 @@ export class StallSim {
     this.jamAt = -10;
     this.mothsUntil = -10;
     this.darkUntil = -10;
+    this.lampOut = LAMPS.map(() => -10); // each lamp is out until this time
+    this.vaseKnocks = VASES.map(() => 0);
+    this.vaseDown = VASES.map(() => -1); // time it went off the shelf, or -1 while it stands
+    this.tasks = tasksFor(seed); // the round's seed, not this stall's: the same two for everyone
+    this.taskDone = this.tasks.map(() => 0);
+    this.taskMoons = 0; // which moons have been hit (bit 0, bit 1)
+    this.taskCentres = 0;
     this.corks = []; // in flight
     this.rested = []; // where corks came to rest: they stay for the round
     this.pending = []; // fire inputs waiting for their time
@@ -262,16 +308,22 @@ export class StallSim {
 
     // Targets: thin plates in a plane. A cork crossing the plane inside the shape strikes it.
     if (v[2] !== 0) this.strikeTargets(c, x0, y0, z0);
+    // The rest of the stall: lamps, the prizes on the shelf, the drive on the left wall.
+    this.strikeProps(c, x0, y0, z0);
 
-    // Side walls and the back board.
-    if (p[0] > HALF_W - CORK_R || p[0] < -HALF_W + CORK_R) {
+    // Side walls and the back board, as tall as they are built and no taller: a cork aimed over
+    // the top flies on into the dusk. (Only a cork still inside the stall can meet them.)
+    const inside = Math.abs(x0) <= HALF_W - CORK_R + 1e-6 && z0 >= BACK.z + CORK_R - 1e-6;
+    if (inside && (p[0] > HALF_W - CORK_R || p[0] < -HALF_W + CORK_R) && p[1] < WALL_TOP) {
       p[0] = p[0] > 0 ? HALF_W - CORK_R : -HALF_W + CORK_R;
       v[0] *= -0.42;
       v[1] *= 0.8;
       v[2] *= 0.8;
       this.bounce(c, "wall");
+      // The chalk board hangs on the left wall: a cork leaves its mark.
+      if (p[0] < 0 && Math.abs(p[1] - CHALK_BOARD.y) < CHALK_BOARD.h / 2 + 0.03 && Math.abs(p[2] - CHALK_BOARD.z) < CHALK_BOARD.w / 2 + 0.03) this.prop(c, "chalk", 0);
     }
-    if (p[2] < BACK.z + CORK_R && p[1] < BACK.top + 0.36) {
+    if (inside && p[2] < BACK.z + CORK_R && p[1] < backTop(p[0])) {
       p[2] = BACK.z + CORK_R;
       v[2] *= -0.36;
       v[0] = v[0] * 0.7 + (c.spin - 0.5) * 0.9;
@@ -305,6 +357,146 @@ export class StallSim {
     }
     if (p[1] < -1 || p[2] > 1.2 || c.age > 6) return this.rest(c, true);
     return true;
+  }
+
+  prop(c, what, i, extra) {
+    const e = { k: "prop", seat: this.seat, id: c.id, t: this.t, what, i, x: c.p[0], y: c.p[1], z: c.p[2], ...extra };
+    this.events.push(e);
+    this.checkTasks(e);
+  }
+
+  /** After a hit or a knock: has it done one of the round's challenges? Each pays its bonus once. */
+  checkTasks(e) {
+    if (!this.live) return;
+    if (e.k === "hit") {
+      if (e.target === "d0") this.taskMoons |= 1;
+      if (e.target === "d1") this.taskMoons |= 2;
+      if (e.perfect) this.taskCentres += 1;
+    }
+    for (let n = 0; n < this.tasks.length; n++) {
+      if (this.taskDone[n]) continue;
+      const task = TASKS[this.tasks[n]];
+      let done = false;
+      if (e.k === "hit") {
+        if (task.id === "five") done = e.streak >= 5;
+        else if (task.id === "rico-star") done = e.ricochet && e.row === 1;
+        else if (task.id === "bell") done = e.rung;
+        else if (task.id === "moons") done = this.taskMoons === 3;
+        else if (task.id === "shutter") done = e.target === "sh";
+        else if (task.id === "centres") done = this.taskCentres >= 3;
+        else if (task.id === "pots") done = this.plateDown.every((down) => down >= 0);
+      } else if (task.id === "lamp") done = e.what === "lamp";
+      else if (task.id === "prize") done = e.what === "vase" && e.broke;
+      if (!done) continue;
+      this.taskDone[n] = 1;
+      this.score += task.bonus;
+      this.events.push({ k: "task", seat: this.seat, t: this.t, n, task: this.tasks[n], bonus: task.bonus, score: this.score, x: e.x, y: e.y, z: e.z });
+    }
+  }
+
+  /**
+   * Things that are not targets but are in the way: a cork bounces off them and they answer.
+   * A lamp goes out for a while, a prize rocks and then falls, a wheel of the drive rings.
+   */
+  strikeProps(c, x0, y0, z0) {
+    const p = c.p;
+    const v = c.v;
+    const dx = p[0] - x0;
+    const dy = p[1] - y0;
+    const dz = p[2] - z0;
+    const len2 = dx * dx + dy * dy + dz * dz;
+    if (len2 === 0) return;
+    // Lamps: small glass spheres. The nearest point of this step's path to the lamp's middle.
+    if (p[1] > 1.6 || y0 > 1.6) {
+      for (let i = 0; i < LAMPS.length; i++) {
+        if (c.lamp === i) continue; // it has had this one: no rattling between a lamp and its wall
+        const L = LAMPS[i];
+        const lx = L.p[0] - x0;
+        const ly = L.p[1] - y0;
+        const lz = L.p[2] - z0;
+        const reach = L.r + CORK_R;
+        if (Math.abs(lz) > 0.2 && Math.abs(L.p[2] - p[2]) > 0.2) continue;
+        const f = Math.max(0, Math.min(1, (lx * dx + ly * dy + lz * dz) / len2));
+        const nx = x0 + dx * f - L.p[0];
+        const ny = y0 + dy * f - L.p[1];
+        const nz = z0 + dz * f - L.p[2];
+        const d2 = nx * nx + ny * ny + nz * nz;
+        if (d2 > reach * reach) continue;
+        // Off the glass: back along the way it came, most of its speed gone.
+        const d = Math.sqrt(d2) || 1;
+        const into = (v[0] * nx + v[1] * ny + v[2] * nz) / d;
+        p[0] = L.p[0] + (nx / d) * reach;
+        p[1] = L.p[1] + (ny / d) * reach;
+        p[2] = L.p[2] + (nz / d) * reach;
+        if (into < 0) {
+          v[0] = (v[0] - (1.5 * into * nx) / d) * 0.5;
+          v[1] = (v[1] - (1.5 * into * ny) / d) * 0.5;
+          v[2] = (v[2] - (1.5 * into * nz) / d) * 0.5;
+        }
+        c.lamp = i;
+        this.bounce(c, "lamp");
+        const lit = this.t >= this.lampOut[i];
+        this.lampOut[i] = this.t + LAMP_OUT_SECONDS;
+        this.prop(c, "lamp", i, { lit });
+        return;
+      }
+    }
+    // The prizes: upright, on the shelf of the right wall.
+    if (p[0] > HALF_W - 0.2 && p[1] > VASES[0].y - 0.01 && p[1] < VASES[0].y + 0.27) {
+      for (let i = 0; i < VASES.length; i++) {
+        if (this.vaseDown[i] >= 0 || c.vase === i) continue;
+        const V = VASES[i];
+        if (p[1] > V.y + V.h + CORK_R) continue;
+        const reach = V.r + CORK_R;
+        const fx = V.x - x0;
+        const fz = V.z - z0;
+        const flat2 = dx * dx + dz * dz;
+        const f = flat2 > 0 ? Math.max(0, Math.min(1, (fx * dx + fz * dz) / flat2)) : 0;
+        const nx = x0 + dx * f - V.x;
+        const nz = z0 + dz * f - V.z;
+        const d2 = nx * nx + nz * nz;
+        if (d2 > reach * reach) continue;
+        const d = Math.sqrt(d2) || 1;
+        const into = (v[0] * nx + v[2] * nz) / d;
+        p[0] = V.x + (nx / d) * reach;
+        p[2] = V.z + (nz / d) * reach;
+        if (into < 0) {
+          v[0] = (v[0] - (1.5 * into * nx) / d) * 0.45;
+          v[2] = (v[2] - (1.5 * into * nz) / d) * 0.45;
+          v[1] *= 0.6;
+        }
+        c.vase = i;
+        this.bounce(c, "vase");
+        this.vaseKnocks[i] += 1;
+        const broke = this.vaseKnocks[i] >= VASE_KNOCKS;
+        if (broke) this.vaseDown[i] = this.t;
+        this.prop(c, "vase", i, { broke, vx: v[0], vz: v[2] });
+        return;
+      }
+    }
+    // The drive: the flywheel and the three wheels, flat against the left wall.
+    const face = DRIVE.x + 0.035;
+    if (x0 > face && p[0] <= face) {
+      const f = (face - x0) / dx;
+      const hy = y0 + dy * f;
+      const hz = z0 + dz * f;
+      for (let i = 0; i < WHEELS.length; i++) {
+        const w = WHEELS[i];
+        const ry = hy - w.y;
+        const rz = hz - w.z;
+        if (ry * ry + rz * rz > (w.r + CORK_R) * (w.r + CORK_R)) continue;
+        p[0] = face + CORK_R;
+        p[1] = hy;
+        p[2] = hz;
+        v[0] *= -0.5;
+        // A turning wheel throws the cork along its rim.
+        v[1] = v[1] * 0.6 + rz * 3;
+        v[2] = v[2] * 0.6 - ry * 3;
+        this.bounce(c, "wheel");
+        this.prop(c, "wheel", i);
+        return;
+      }
+    }
   }
 
   bounce(c, what) {
@@ -432,16 +624,18 @@ export class StallSim {
     this.best = Math.max(this.best, this.streak);
     const mult = this.streak >= 8 ? 3 : this.streak >= 4 ? 2 : 1;
     let pts = hit.pts * mult;
-    if (ricochet) pts *= 2;
+    if (ricochet) pts *= RICOCHET_TIMES;
     if (perfect) pts = Math.round(pts * 1.5);
     this.score += pts;
     if (hit.target !== "bell") this.bell = Math.min(BELL_FULL, this.bell + (hit.row === 2 ? 2 : 1));
     else if (!hit.rung) this.bell = Math.min(BELL_FULL, this.bell + 1);
     if (perfect) this.corksLeft = Math.min(CORKS_PER_ROUND, this.corksLeft + 1); // a dead-centre hit earns the cork back
-    this.events.push({
+    const e = {
       k: "hit", seat: this.seat, id: c.id, t: this.t, target: hit.target, row: hit.row, pts, mult, perfect, ricochet,
       rung: !!hit.rung, streak: this.streak, score: this.score, bell: this.bell, x: hit.x, y: hit.y, z: hit.z, vx: v[0],
-    });
+    };
+    this.events.push(e);
+    this.checkTasks(e);
   }
 
   /** A rival's cork wedges into the cam: the front row falls and stays down until it is shot loose. */

@@ -36,7 +36,7 @@
     "fps": "node tools/gpu-fps.mjs"
   },
   "devDependencies": {
-    "n8-party-games": "github:n8watkins/n8-party-games#12df6a9710f2c904376422f9b3f7e11655dedc9c",
+    "n8-party-games": "github:n8watkins/n8-party-games#07acfe723476e752a8dae5458d14a9240ef4e862",
     "playwright": "^1.64.1",
     "three": "^0.186.0",
     "vitest": "4.1",

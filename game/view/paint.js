@@ -497,14 +497,26 @@ export function chalkTexture() {
     g.fillStyle = "rgba(236,232,220,0.9)";
     g.textAlign = "center";
     g.font = `400 46px "Abril Fatface", Georgia, serif`;
-    g.fillText("Best today", 256, 58);
+    g.fillText("High scores", 256, 58);
     g.fillRect(96, 76, 320, 3);
-    g.font = `italic 700 40px "Playfair Display", Georgia, serif`;
+    // Each row: its place, three letters, the score. The row this device chalked up is underlined
+    // twice and starred, as a showman would.
     rows.slice(0, 5).forEach((row, i) => {
-      g.textAlign = "left";
-      g.fillText(row.name.slice(0, 9), 44, 138 + i * 60);
+      const y = 138 + i * 60;
+      g.font = `400 30px "Abril Fatface", Georgia, serif`;
       g.textAlign = "right";
-      g.fillText(String(row.score), 470, 138 + i * 60);
+      g.fillText(String(row.rank ?? i + 1), 66, y - 2);
+      g.font = `italic 700 40px "Playfair Display", Georgia, serif`;
+      g.textAlign = "left";
+      g.fillText(String(row.name).slice(0, 5), 92, y);
+      g.textAlign = "right";
+      g.fillText(String(row.score), 452, y);
+      if (row.mine) {
+        g.fillRect(88, y + 9, 366, 3);
+        g.fillRect(88, y + 16, 366, 2);
+        g.font = `400 32px "Abril Fatface", Georgia, serif`;
+        g.fillText("\u2605", 492, y - 2);
+      }
     });
     // Chalk is never solid: rub some of it away.
     g.globalCompositeOperation = "destination-out";
@@ -516,7 +528,27 @@ export function chalkTexture() {
     g.globalCompositeOperation = "source-over";
     t.needsUpdate = true;
   };
-  return { texture: t, draw };
+  /** A cork has struck the board at (u, v), 0..1 from its top left: the chalk there is rubbed thin, with a pale ring of dust. */
+  const smudge = (u, v) => {
+    const g = c.getContext("2d");
+    const x = u * c.width;
+    const y = v * c.height;
+    g.globalCompositeOperation = "destination-out";
+    const rub = g.createRadialGradient(x, y, 4, x, y, 46);
+    rub.addColorStop(0, "rgba(0,0,0,0.9)");
+    rub.addColorStop(1, "rgba(0,0,0,0)");
+    g.fillStyle = rub;
+    g.fillRect(x - 50, y - 50, 100, 100);
+    g.globalCompositeOperation = "source-over";
+    const dust = g.createRadialGradient(x, y, 14, x, y, 40);
+    dust.addColorStop(0, "rgba(236,232,220,0)");
+    dust.addColorStop(0.7, "rgba(236,232,220,0.16)");
+    dust.addColorStop(1, "rgba(236,232,220,0)");
+    g.fillStyle = dust;
+    g.fillRect(x - 50, y - 50, 100, 100);
+    t.needsUpdate = true;
+  };
+  return { texture: t, draw, smudge };
 }
 
 /** Trodden grass at dusk, with the stall's lamplight spilling out of its open front. */
