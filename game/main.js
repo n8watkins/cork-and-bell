@@ -5,7 +5,8 @@
 //   ?seed=<n>        a repeatable solo run
 //   ?t=<seconds>     freeze the picture at that round time
 //   ?state=<name>    last (the fast last stretch), end (the end card), jam | moths | dark (one attack)
-//   ?view=<name>     player (default), wide, mech, far, front, gun, four (four stalls side by side)
+//   ?view=<name>     player (default), wide, mech, far, front, gun, board (the chalk board), four (four stalls side by side)
+//   ?score=<n>       (with state=end) the score the end card shows, to try the high score entry
 //   ?join=<pin>      open the lobby with a PIN filled in
 //   ?host=1&seats=4&name=Ann   (with auto=1) make a room and start when that many are ready
 //   ?screen=1        (with auto=1) make a room as the shared screen
@@ -18,10 +19,11 @@ import { HDRLoader } from "three/addons/loaders/HDRLoader.js";
 import { PartyClient } from "/party-kit/client/party-client.js";
 import { mountLobby } from "/party-kit/client/lobby.js";
 import { Sound, buzz } from "./audio.js";
+import { Scores } from "./scores.js";
 import { LocalSession, NetSession } from "./session.js";
 import { ATTACK_NAMES, COUNT_IN, game } from "./shared/battle.js";
-import { ROWS } from "./shared/layout.js";
-import { BELL_FULL, COCK_SECONDS, ROUND_SECONDS, mech, speedAt } from "./shared/sim.js";
+import { COUNTER, TRAY } from "./shared/layout.js";
+import { BELL_FULL, COCK_SECONDS, RICOCHET_TIMES, ROUND_SECONDS, StallSim, TASKS, mech, speedAt } from "./shared/sim.js";
 import { Lens, fourInARow, gridFor } from "./view/render.js";
 import { StallAssets, StallView } from "./view/stall.js";
 
@@ -34,6 +36,7 @@ const P = {
   state: params.get("state"),
   view: params.get("view") ?? "player",
   join: params.get("join"),
+  score: num("score", null),
   host: params.get("host") === "1",
   screen: params.get("screen") === "1",
   seats: num("seats", 2),
@@ -60,7 +63,6 @@ let frozen = false;
 let lastFrame = performance.now();
 let idleSince = performance.now();
 let endShownAt = null;
-let hadInput = false;
 let pointer = { x: innerWidth / 2, y: innerHeight * 0.45, down: false, touch: false, seen: false };
 const keys = new Set();
 let lastTime = 0;
@@ -91,41 +93,111 @@ async function load() {
   const env = pmrem.fromEquirectangular(hdr).texture;
   hdr.dispose();
   assets = new StallAssets({ gltf, albedo, lit, dusk, env });
-  assets.chalk.draw(bestScores());
+  assets.chalk.draw(scores.rows());
+  scores.onChange = () => {
+    assets.chalk.draw(scores.rows());
+    showScoreToBeat();
+  };
+  showScoreToBeat();
+  scores.load(); // the board follows when it answers; the house's scores are up meanwhile
 }
 
-// ------------------------------------------------------------------ best scores of the day
+// ------------------------------------------------------------------ the high scores
 
-function bestScores() {
-  const today = new Date().toDateString();
-  try {
-    const saved = JSON.parse(localStorage.getItem("cork-and-bell:best") ?? "null");
-    if (saved?.day === today) return saved.rows;
-  } catch {
-    // No storage: the board starts from the house scores.
+const scores = new Scores();
+
+/** The start board names the score to beat, as a cabinet shows its high score while it waits. */
+function showScoreToBeat() {
+  const top = scores.rows()[0];
+  $("start-beat").textContent = top ? `90 seconds. To beat: ${top.name} ${top.score}.` : "90 seconds, 70 corks.";
+}
+
+/** How a stall did, in a line: its aim, its best run, and the challenges it did. */
+function statLine(r, sim) {
+  const aim = r.shots ? Math.round((r.hits / r.shots) * 100) : 0;
+  const done = sim ? sim.taskDone.filter(Boolean).length : 0;
+  return `${r.hits} hits from ${r.shots} corks (${aim}%), best run ${r.best}` + (sim ? `, ${done} of ${sim.taskDone.length} challenges` : "");
+}
+
+/** The end card's last word on a solo score, when there are no letters to ask for. */
+function scoreNote(score, newBest) {
+  const best = scores.ownBest()?.score ?? score;
+  if (!scores.reachable) return newBest ? "A new best on this device. (The high score board could not be reached.)" : `Your best on this device is ${best}. (The high score board could not be reached.)`;
+  const rows = scores.top;
+  const toBeat = rows.length ? rows[rows.length - 1].score : 0;
+  return newBest ? `Your best yet. ${toBeat + 1} gets you on the board.` : `Your best is ${best}. ${toBeat + 1} gets you on the board.`;
+}
+
+/** Asks for three letters on the end card and chalks the score up. */
+function askInitials(score) {
+  const form = $("initials");
+  const input = $("initials-in");
+  const say = $("initials-say");
+  form.hidden = false;
+  form.dataset.score = String(score);
+  input.value = scores.lastInitials();
+  input.disabled = false;
+  $("initials-ok").disabled = false;
+  say.textContent = "";
+  $("card-note").textContent = "";
+  // On a phone the keyboard would cover the card: it opens when the letters are touched.
+  if (!coarse) setTimeout(() => (input.focus(), input.select()), 60);
+}
+
+// The letters offered are the ones used last: touching the box selects them, so typing replaces them.
+$("initials-in").addEventListener("focus", (e) => requestAnimationFrame(() => e.target.select()));
+$("initials-in").addEventListener("mouseup", (e) => e.target.selectionStart !== e.target.selectionEnd && e.preventDefault());
+$("initials-in").addEventListener("input", (e) => {
+  // Letters only, capitals, three of them.
+  e.target.value = e.target.value.replace(/[^a-z]/gi, "").toUpperCase().slice(0, 3);
+  endShownAt = performance.now(); // someone is here: the house does not take the stall back yet
+});
+
+$("initials").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const form = $("initials");
+  const input = $("initials-in");
+  const say = $("initials-say");
+  const score = Number(form.dataset.score);
+  const name = input.value.trim().toUpperCase();
+  if (!/^[A-Z]{3}$/.test(name)) {
+    say.textContent = "Three letters, please.";
+    input.focus();
+    return;
   }
-  return [
-    { name: "Mabel", score: 4120 },
-    { name: "Old Tom", score: 3375 },
-    { name: "Fitch", score: 2640 },
-    { name: "Dolly", score: 1890 },
-    { name: "You?", score: 0 },
-  ];
-}
-
-function recordScore(name, score) {
-  const rows = bestScores().filter((r) => r.name !== "You?");
-  rows.push({ name, score });
-  rows.sort((a, b) => b.score - a.score);
-  const top = rows.slice(0, 5);
-  try {
-    localStorage.setItem("cork-and-bell:best", JSON.stringify({ day: new Date().toDateString(), rows: top }));
-  } catch {
-    // Not saved; it still shows for this visit.
+  input.disabled = true;
+  $("initials-ok").disabled = true;
+  say.textContent = "Chalking it up";
+  const result = await scores.submit(name, score);
+  endShownAt = performance.now();
+  if (!result.ok && (result.error === "bad_name" || result.error === "rate_limited")) {
+    say.textContent = result.error === "bad_name" ? "Not those three. Try three others." : "Too many scores from here just now. Try again in a few minutes.";
+    input.disabled = result.error !== "bad_name";
+    $("initials-ok").disabled = result.error !== "bad_name";
+    if (result.error === "bad_name") input.focus();
+    return;
   }
-  assets.chalk.draw(top);
-  return top.findIndex((r) => r.name === name && r.score === score);
-}
+  form.hidden = true;
+  input.blur();
+  if (!result.ok) {
+    $("card-note").textContent = "The board could not be reached, so it is not chalked up. Your best on this device is kept.";
+    return;
+  }
+  scores.rememberInitials(name);
+  // Where it stands on the chalk board, the house's own players counted in.
+  const rank = scores.rows().find((r) => r.mine)?.rank ?? result.place + 1;
+  if (result.place >= 0 && rank === 1) {
+    // The top of the board: the stall makes a fuss.
+    $("card-title").textContent = "New high score!";
+    $("card").classList.add("record");
+    sound.end(true);
+    for (const v of views) {
+      v.view.chaseUntil = v.view.time + 4;
+      v.view.chaseKind = 2;
+    }
+  }
+  $("card-note").textContent = result.place < 0 ? "Somebody got there first: it did not make the board after all." : `Number ${rank} on the board. It is chalked up on the left wall.`;
+});
 
 // ------------------------------------------------------------------ sessions
 
@@ -198,6 +270,40 @@ function layout() {
     v.view.aspect = innerWidth / cols / (innerHeight / rows);
     v.view.updateCamera(0, wall, true); // the camera is right at once: the very first click aims through it
   }
+  // The tally keeps to the left of the cork tray, whatever the screen's shape: tell the stylesheet
+  // where the tray's near corner is. The picture leans a little with the aim, so take the
+  // furthest left the corner ever gets.
+  if (views.length === 1 && views[0].view.viewName === "player") {
+    const view = views[0].view;
+    const aim = view.aimSoft.clone();
+    const x = TRAY.x - TRAY.w / 2 - TRAY_RIM;
+    const floor = 1 - TALLY_FOOT / innerHeight; // the ticket's bottom edge, as a share of the height
+    let left = 1;
+    let top = 1;
+    for (const [ax, ay] of AIM_CORNERS) {
+      view.aimSoft.set(ax, ay, aim.z);
+      view.updateCamera(0, wall, true);
+      const near = view.project(x, COUNTER.top, TRAY.z + TRAY.d / 2 + TRAY_RIM);
+      const far = view.project(x, COUNTER.top, TRAY.z - TRAY.d / 2 - TRAY_RIM);
+      // The tray's left edge runs up the screen and inwards. Its near corner is often below the
+      // bottom of the screen: what counts is where the edge is at the height of the ticket's foot.
+      const k = near[1] > floor && near[1] > far[1] ? Math.max(0, (floor - far[1]) / (near[1] - far[1])) : 1;
+      left = Math.min(left, far[0] + (near[0] - far[0]) * k);
+      top = Math.min(top, view.project(x, COUNTER.top + TRAY_WALL, TRAY.z - TRAY.d / 2 - TRAY_RIM)[1]);
+    }
+    view.aimSoft.copy(aim);
+    view.updateCamera(0, wall, true);
+    const px = Math.floor(left * innerWidth);
+    $("hud").style.setProperty("--tray-left", `${px}px`);
+    $("hud").style.setProperty("--tray-top", `${Math.ceil((1 - top) * innerHeight)}px`);
+    // Too little room beside the tray for the ticket at a readable size, and height to spare
+    // (a tablet, a squarer window): it sits above the tray. A short phone screen keeps it beside.
+    $("tally").classList.toggle("raised", px < RAISE_UNDER && innerHeight >= 500);
+  } else {
+    $("hud").style.removeProperty("--tray-left");
+    $("hud").style.removeProperty("--tray-top");
+    $("tally").classList.remove("raised");
+  }
   const names = $("names");
   names.replaceChildren();
   if (views.length > 1) {
@@ -214,7 +320,19 @@ function layout() {
     });
   }
 }
-addEventListener("resize", layout);
+// A phone's keyboard shrinks the window while a name is typed: the picture keeps its shape until it closes.
+const typing = () => document.activeElement instanceof HTMLInputElement;
+addEventListener("resize", () => typing() || layout());
+addEventListener("focusout", () => setTimeout(() => typing() || layout(), 250));
+
+/** The tray's painted rim in metres, and the four corners of where the gun can aim (the picture leans furthest there). */
+const TRAY_RIM = 0.012;
+const TRAY_WALL = 0.04;
+/** The least the ticket ever stands off the bottom of the screen, in pixels (see #tally in style.css). */
+const TALLY_FOOT = 10;
+const AIM_CORNERS = [[-1.35, 0.6], [1.35, 0.6], [-1.35, 2.7], [1.35, 2.7]];
+/** With fewer pixels than this to the left of the tray, the ticket beside it would be too small to read. */
+const RAISE_UNDER = 172;
 
 function myView() {
   if (!session) return null;
@@ -234,8 +352,8 @@ function aimFromPointer() {
   return [Math.max(-1.35, Math.min(1.35, ax)), Math.max(0.6, Math.min(2.7, ay))];
 }
 
+/** The first shot at the house's stall takes the gun: a click or a touch on the picture, or an aiming key. */
 function takeOver() {
-  hadInput = true;
   idleSince = performance.now();
   if (mode === "attract" && !P.auto) {
     startLocal("solo", { countIn: 0 });
@@ -262,7 +380,6 @@ stage.addEventListener("pointermove", (e) => {
   pointer.y = e.clientY;
   pointer.touch = e.pointerType === "touch";
   pointer.seen = true;
-  if (!pointer.touch) takeOver();
   idleSince = performance.now();
 });
 stage.addEventListener("pointerdown", (e) => {
@@ -288,11 +405,13 @@ stage.addEventListener("pointerup", (e) => {
 });
 stage.addEventListener("contextmenu", (e) => e.preventDefault());
 addEventListener("keydown", (e) => {
-  if (e.target instanceof HTMLInputElement) return;
-  if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", " "].includes(e.key)) e.preventDefault();
+  // A field or a button has the key: typing a name, or Enter on "Play alone".
+  if (e.target instanceof HTMLInputElement || e.target instanceof HTMLButtonElement) return;
+  const aiming = ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", " ", "Enter"].includes(e.key);
+  if (aiming && e.key !== "Enter") e.preventDefault();
   if (e.repeat) return;
   keys.add(e.key);
-  takeOver();
+  if (aiming) takeOver();
   if (e.key === " " || e.key === "Enter") {
     if (endShownAt !== null) playAgain();
     else fire();
@@ -302,19 +421,24 @@ addEventListener("keydown", (e) => {
 });
 addEventListener("keyup", (e) => keys.delete(e.key));
 
+/** Both sound switches (the start board's and the one beside a round) always say the same thing. */
+function showSound() {
+  const on = sound.on;
+  for (const id of ["sound", "start-sound"]) $(id).setAttribute("aria-pressed", String(on));
+  $("sound").querySelector("span").textContent = on ? "Sound: on" : "Sound: off";
+  $("start-sound").querySelector("b").textContent = on ? "Sound is on" : "Sound is off";
+  $("start-sound").querySelector("small").textContent = (on ? "Turn it off" : "Turn it on") + (coarse ? "." : " (or press M).");
+}
+
 function toggleSound() {
-  const b = $("sound");
-  if (sound.on) {
-    sound.disable();
-    b.textContent = "Enable sound";
-    b.setAttribute("aria-pressed", "false");
-  } else if (sound.enable()) {
-    b.textContent = "Sound on";
-    b.setAttribute("aria-pressed", "true");
-    sound.openingBell(1);
-  }
+  if (sound.on) sound.disable();
+  else if (sound.enable()) sound.openingBell(1);
+  showSound();
+  $("sound").blur(); // so the space bar goes back to the gun, not to this switch
 }
 $("sound").addEventListener("click", toggleSound);
+$("start-sound").addEventListener("click", toggleSound);
+showSound();
 
 function playAgain() {
   if (mode === "battle") {
@@ -330,18 +454,32 @@ function playAgain() {
   sound.openingBell();
 }
 $("again").addEventListener("click", playAgain);
+$("start-solo").addEventListener("click", () => {
+  idleSince = performance.now();
+  playAgain();
+});
+$("start-note").textContent = coarse ? "Or touch any target to take the gun." : "Or click any target to take the gun.";
+
+/** The arrow shows wherever there is something to press: the start board, the end card, the lobby. */
+function showPointer() {
+  document.body.classList.toggle("pointer", !$("start").hidden || !$("card").hidden || !lobby.root.hidden);
+  // Under the lobby or the end card the rest of the HUD steps back, so nothing shows through or pokes out.
+  document.body.classList.toggle("lobby", !lobby.root.hidden);
+  document.body.classList.toggle("carded", !$("card").hidden);
+}
 
 // ------------------------------------------------------------------ the lobby (the party kit's)
 
 const lobby = mountLobby(document.body, party, {
   title: "Cork & Bell",
   joinPath: location.pathname,
-  onOpen: () => document.body.classList.add("pointer"),
-  onClose: () => document.body.classList.remove("pointer"),
+  onOpen: () => (hud(), showPointer()),
+  onClose: () => (hud(), showPointer()),
   // The lobby toy and character slots are left empty on purpose: see party-kit/README.md.
 });
 const openLobby = () => lobby.open({ pin: P.join ?? "" });
 $("battle").addEventListener("click", openLobby);
+$("battle-top").addEventListener("click", openLobby);
 $("card-battle").addEventListener("click", openLobby);
 
 party.on("start", (msg) => startNet(msg));
@@ -405,12 +543,19 @@ function showBanner(title, text, { good = false, seconds = 1.6, attack = null } 
   bannerAttack = attack;
 }
 
-function pop(view, e, text, sub, big) {
+/** The points a hit paid, rising from the target. A ricochet gets a paper flag, a ring of gold, and twice the time in the air. */
+function pop(view, e, text, sub, big, flag = null) {
   const i = views.indexOf(view);
   const [u, v] = view.view.project(e.x, e.y, e.z);
   const el = document.createElement("span");
-  if (big) el.className = "big";
-  el.textContent = text;
+  el.className = (big ? "big" : "") + (flag ? " flagged" : "");
+  if (flag) {
+    const f = document.createElement("em");
+    f.textContent = flag[0];
+    f.appendChild(document.createElement("b")).textContent = flag[1];
+    el.appendChild(f);
+  }
+  el.appendChild(document.createTextNode(text));
   if (sub) {
     const s = document.createElement("small");
     s.textContent = sub;
@@ -420,7 +565,21 @@ function pop(view, e, text, sub, big) {
   el.style.left = `${(((i % cols) + u) / cols) * 100}%`;
   el.style.top = `${((Math.floor(i / cols) + v) / rows) * 100}%`;
   $("pops").appendChild(el);
-  setTimeout(() => el.remove(), 950);
+  if (flag && views.length === 1) {
+    // A flag is wide: all of it stays on the screen, however near the edge the target is.
+    const half = el.offsetWidth / 2 + 8;
+    el.style.left = `${Math.max(half, Math.min(innerWidth - half, u * innerWidth))}px`;
+  }
+  setTimeout(() => el.remove(), flag ? 2100 : 950);
+  if (flag) {
+    // A ring of gold opens out from the target, so the eye is there before the words are.
+    const ring = document.createElement("i");
+    ring.className = "ring";
+    ring.style.left = el.style.left;
+    ring.style.top = el.style.top;
+    $("pops").appendChild(ring);
+    setTimeout(() => ring.remove(), 800);
+  }
 }
 
 function nameOf(seat) {
@@ -443,23 +602,52 @@ function onEvent(e) {
         const notes = [];
         if (e.rung) notes.push("the bell");
         else if (e.perfect) notes.push("dead centre");
-        if (e.ricochet) notes.push("ricochet");
-        if (e.mult > 1) notes.push(`${e.mult} times`);
-        pop(v, e, `+${e.pts}`, notes.join(", "), e.pts >= 100);
+        if (e.mult > 1) notes.push(`run ×${e.mult}`);
+        pop(v, e, `+${e.pts}`, notes.join(", "), e.pts >= 100, e.ricochet ? ["Ricochet", `×${RICOCHET_TIMES}`] : null);
       }
       if (e.seat === session.mySeat) {
-        buzz(e.rung ? [30, 40, 30, 40, 60] : 22);
+        buzz(e.rung ? [30, 40, 30, 40, 60] : e.ricochet ? [18, 30, 40] : 22);
         if (e.bell >= BELL_FULL && !e.rung && e.target !== "bell" && !session.bellCalled) {
           session.bellCalled = true;
           showBanner("The bell is live", session.seats.length > 1 ? "Ring it to put a rival's lamps out." : "Ring it for a hundred.", { good: true, seconds: 2.2 });
         }
         if (e.rung) session.bellCalled = false;
+        // The bell in the last second of the round: last orders.
+        if (e.target === "bell" && e.t >= ROUND_SECONDS - 1) {
+          showBanner("Last orders!", "The bell, right on time.", { good: true, seconds: 2.4 });
+          sound.lastOrders();
+          if (v) {
+            v.view.chaseUntil = v.view.time + 2.6;
+            v.view.chaseKind = 2;
+          }
+        }
       }
       break;
     case "bounce":
       v?.view.onEvent(e);
-      if (mine) sound.bounce(e);
+      if (mine && !["lamp", "vase", "wheel"].includes(e.what)) sound.bounce(e);
       break;
+    case "prop":
+      v?.view.onEvent(e);
+      if (mine) sound.prop(e);
+      break;
+    case "task": {
+      // A challenge done: the bonus rises from where it was done, and the player is told which.
+      const task = TASKS[e.task];
+      // Said once: the player's own stall gets the banner (it names the challenge), so there the
+      // bonus rises bare; a stall on a shared screen has no banner, so its bonus carries the flag.
+      if (v && !frozen) pop(v, { ...e, y: e.y + 0.16 }, `+${e.bonus}`, "", true, e.seat === session.mySeat ? null : ["Challenge", "done"]);
+      if (v) {
+        v.view.chaseUntil = v.view.time + 2;
+        v.view.chaseKind = 2;
+      }
+      if (e.seat === session.mySeat) {
+        showBanner("Challenge done", `${task.text}: ${e.bonus} extra.`, { good: true, seconds: 2.2 });
+        buzz([20, 30, 20, 30, 50]);
+      }
+      if (mine) sound.task();
+      break;
+    }
     case "rest":
       if (mine) sound.rest();
       break;
@@ -547,10 +735,34 @@ function fmtTime(t) {
 function hud() {
   if (!session) return;
   const playing = mode === "solo" || (mode === "battle" && session.mySeat >= 0);
-  $("tally").hidden = !playing && mode !== "attract";
-  $("battle").hidden = mode === "battle";
+  // The house's stall with nobody at the gun is the start screen: the board with the three choices.
+  // (With ?auto=1 the bot is the show, and the tally stays up for it.)
+  const start = mode === "attract" && !P.auto;
+  document.body.dataset.screen = start ? "start" : mode;
+  $("start").hidden = !start || !lobby.root.hidden;
+  $("controls").hidden = start;
+  // The end card says the score itself, and on a phone it needs the ticket's corner.
+  $("tally").hidden = (!playing && !(mode === "attract" && P.auto)) || !$("card").hidden;
+  $("battle-top").hidden = mode === "battle";
+  showPointer();
+  // The round's challenges, under the title. (Not on the start screen: there is nothing to do yet.)
+  const tasks = $("tasks");
+  const sim0 = session.sims[session.mySeat >= 0 ? session.mySeat : session.seats[0].seat];
+  tasks.hidden = start || !sim0;
+  const key = sim0 ? sim0.tasks.join() : "";
+  if (!tasks.hidden && tasks.dataset.key !== key) {
+    tasks.dataset.key = key;
+    tasks.replaceChildren();
+    for (const index of sim0.tasks) {
+      const li = document.createElement("li");
+      li.innerHTML = "<i></i><span></span><b></b>";
+      li.children[1].textContent = TASKS[index].text;
+      li.children[2].textContent = `+${TASKS[index].bonus}`;
+      tasks.appendChild(li);
+    }
+  }
   const hint = $("hint");
-  if (mode === "attract") hint.textContent = coarse ? "Drag to aim, let go to fire. Touch to begin." : "The house is playing. Move the pointer and click to take the gun.";
+  if (mode === "attract") hint.textContent = "The house is playing.";
   else if (mode === "four") hint.textContent = "Four stalls, side by side: a battle as the shared screen shows it.";
   else if (mode === "battle" && session.mySeat < 0) hint.textContent = "Shared screen. Players join on their phones with the PIN.";
   else if (mode === "battle") hint.textContent = "Three in a row jams a rival. Tap a rival to choose who.";
@@ -583,10 +795,16 @@ function hud() {
 function hudFrame(t) {
   const sim = session.sims[session.mySeat >= 0 ? session.mySeat : session.seats[0].seat];
   $("time").textContent = fmtTime(t);
-  $("time").classList.toggle("late", t > ROUND_SECONDS - 10);
+  $("time-cell").classList.toggle("late", t > ROUND_SECONDS - 10 && t < ROUND_SECONDS);
   $("score").textContent = sim.score;
   $("run").textContent = sim.streak;
   $("run-cell").classList.toggle("hot", sim.streak >= 4);
+  // What the run multiplies by, as the rules have it: four in a row doubles, eight trebles.
+  // On a shared screen every stall has the same two challenges: none is ticked there.
+  const ticks = $("tasks").children;
+  for (let n = 0; n < ticks.length; n++) ticks[n].classList.toggle("done", views.length === 1 && !!sim.taskDone[n]);
+  $("run-times").hidden = sim.streak < 4;
+  $("run-times").textContent = sim.streak >= 8 ? "×3" : "×2";
   $("corks").textContent = sim.corksLeft;
   if (mode === "battle" && session.mySeat >= 0) {
     let lead = -1;
@@ -647,17 +865,24 @@ function showCard() {
   list.replaceChildren();
   const solo = session.seats.length === 1;
   let note = "";
+  let wantInitials = 0;
+  $("initials").hidden = true;
+  card.classList.remove("record");
   if (solo) {
     const r = rows[0];
-    const place = mode === "solo" ? recordScore("You", r.score) : -1;
     $("card-title").textContent = "Time, ladies and gentlemen";
     const li = document.createElement("li");
     li.className = "me";
     li.innerHTML = `<span class="place">1</span><span>Your score<small></small></span><b></b>`;
-    li.querySelector("small").textContent = `${r.hits} hits from ${r.shots} corks, best run ${r.best}`;
+    li.querySelector("small").textContent = statLine(r, session.sims[r.seat]);
     li.querySelector("b").textContent = r.score;
     list.appendChild(li);
-    note = place === 0 ? "Top of the board today. It is chalked up on the left wall." : place > 0 ? `Number ${place + 1} on today's board.` : "Not on the board yet. The far row pays best.";
+    if (mode === "solo") {
+      const newBest = scores.keepOwnBest(r.score);
+      if (!scores.reachable) assets.chalk.draw(scores.rows());
+      if (scores.makesBoard(r.score)) wantInitials = r.score;
+      else note = scoreNote(r.score, newBest);
+    }
   } else {
     const win = rows[0];
     $("card-title").textContent = win.seat === session.mySeat ? "You take the prize" : `${win.name} takes the prize`;
@@ -668,26 +893,27 @@ function showCard() {
       li.innerHTML = `<span class="place"></span><span><span class="n"></span><small></small></span><b></b>`;
       li.querySelector(".place").textContent = i + 1;
       li.querySelector(".n").textContent = r.name + (r.seat === session.mySeat ? " (you)" : "");
-      li.querySelector("small").textContent = `${r.hits} hits from ${r.shots} corks, best run ${r.best}`;
+      li.querySelector("small").textContent = statLine(r, session.sims[r.seat]);
       li.querySelector("b").textContent = r.score;
       list.appendChild(li);
     });
     note = mode === "battle" ? (session.mySeat >= 0 ? "The rematch starts the moment everyone taps Rematch." : "Players tap Rematch on their phones.") : "";
   }
   $("card-note").textContent = note;
+  if (wantInitials) askInitials(wantInitials);
   const again = $("again");
   again.disabled = false;
   again.hidden = mode === "battle" && session.mySeat < 0 && false;
   again.textContent = mode === "battle" ? (session.mySeat >= 0 ? "Rematch" : "Start the rematch") : "Play again";
   $("card-battle").hidden = mode === "battle";
   card.hidden = false;
-  document.body.classList.add("pointer");
+  hud();
   endShownAt = performance.now();
 }
 
 function hideCard() {
   $("card").hidden = true;
-  if (lobby.root.hidden) document.body.classList.remove("pointer");
+  showPointer();
   endShownAt = null;
 }
 
@@ -791,6 +1017,8 @@ function frame(now) {
       flyTurn = turn;
       sound.flywheel(speedAt(tMine));
     }
+    // The last five seconds are counted out, as a cabinet hurries its player.
+    if (!frozen && mode !== "attract" && tMine >= ROUND_SECONDS - 5 && tMine < ROUND_SECONDS && Math.floor(tMine) !== Math.floor(lastTime)) sound.countTick(Math.floor(tMine) === ROUND_SECONDS - 1);
     hudFrame(tMine);
     lastTime = tMine;
 
@@ -834,6 +1062,10 @@ async function main() {
   if (P.state === "last") session.advance(72 + session.time() * -1);
   if (P.state === "end") {
     session.advance(ROUND_SECONDS + 2 - session.time());
+    if (P.score !== null) {
+      session.sims[0].score = P.score;
+      await scores.load(); // the tools want the entry form at once, not on the next round
+    }
     for (const e of []) onEvent(e);
   }
   if (["jam", "moths", "dark"].includes(P.state)) {
@@ -855,6 +1087,7 @@ async function main() {
   }
   if (P.state === "end" && mode === "attract") {
     mode = "solo";
+    hud();
     showCard();
   }
   if (P.auto && (P.host || P.join || P.screen)) autoBattle();
@@ -889,6 +1122,24 @@ async function main() {
       const gl = lens.renderer.getContext();
       const ext = gl.getExtension("WEBGL_debug_renderer_info");
       return ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER);
+    },
+    /** For the tools: an aim that sends this stall's next cork into a lamp, a vase, the chalk board or a wheel. */
+    aimFor(what) {
+      const real = session?.sims[session.mySeat];
+      if (!real) return null;
+      const [x0, x1, y0, y1] = { lamp: [-1.3, 1.3, 1.7, 2.7], vase: [0.9, 1.35, 1.3, 2], chalk: [-1.35, -0.9, 1.5, 2.3], wheel: [-1.35, -0.9, 0.6, 1.5] }[what];
+      for (let ay = y0; ay <= y1; ay += 0.04) {
+        for (let ax = x0; ax <= x1; ax += 0.04) {
+          const trial = new StallSim(0, 0);
+          trial.seed = real.seed;
+          trial.shots = real.shots;
+          trial.t = 1;
+          trial.fire(1, ax, ay);
+          trial.step(2.2);
+          if (trial.events.some((e) => e.k === "prop" && e.what === what)) return [ax, ay];
+        }
+      }
+      return null;
     },
     summary() {
       if (!session) return null;

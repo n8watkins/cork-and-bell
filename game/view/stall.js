@@ -3,7 +3,7 @@
 // A StallView reads a StallSim at a given round time and reacts to its events.
 import * as THREE from "three";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
-import { BACK, BELL, BULBS, CAMERA, CHAIN, CHALK_BOARD, COUNTER, DRIVE, HALF_W, JAM, KEY_LIGHT, PENDULUMS, PLATES, ROWS, SCORE_WINDOW, SHUTTER, STEPS, TRAY, muzzle } from "../shared/layout.js";
+import { BACK, BELL, BULBS, CAMERA, CHAIN, CHALK_BOARD, COUNTER, DRIVE, HALF_W, JAM, KEY_LIGHT, PENDULUMS, PLATES, ROWS, SCORE_WINDOW, SHUTTER, STEPS, TRAY, LAMPS, VASES, muzzle } from "../shared/layout.js";
 import { BELL_FULL, COCK_SECONDS, CORK_R, camLift, chainStar, mech, pendulumAngle, shutterOpen } from "../shared/sim.js";
 import { chalkTexture, contactTexture, disc, groundTexture, paintBelt, paintCork, paintMoon, paintReel, paintSheet, paintStar, paintTeapot, paintWood, plateGeometry, star, TEAPOT } from "./paint.js";
 import { makeFarLights, makeSky } from "./render.js";
@@ -43,9 +43,26 @@ void main() {
 }`;
 
 /** Loaded once and shared by every stall on the page. */
+const SPARK = new THREE.Color("#ffd35a");
+
 export class StallAssets {
   constructor({ gltf, albedo, lit, dusk, env }) {
     this.setGeometry = gltf.scene.getObjectByProperty("isMesh", true).geometry;
+    // The prizes on the shelf were baked into the set. They are live now (a cork can knock them
+    // off), so the baked ones are folded away into the shelf they stood on.
+    const pos = this.setGeometry.attributes.position;
+    for (let i = 0; i < pos.count; i++) {
+      const y = pos.getY(i);
+      if (y < VASES[0].y - 0.001 || y > VASES[0].y + 0.27) continue;
+      for (const v of VASES) {
+        const dx = pos.getX(i) - v.x;
+        const dz = pos.getZ(i) - v.z;
+        if (dx * dx + dz * dz < (v.r + 0.006) ** 2 && y < v.y + v.h + 0.006) pos.setXYZ(i, v.x, v.y - 0.012, v.z);
+      }
+    }
+    pos.needsUpdate = true;
+    this.vaseGeos = VASES.map((v) => new THREE.LatheGeometry(v.profile.map(([r, h]) => new THREE.Vector2(r, h)), 28));
+    this.vaseMats = VASES.map((v) => new THREE.MeshStandardMaterial({ color: new THREE.Color().setRGB(...v.paint), roughness: 0.42, metalness: 0.0, side: THREE.DoubleSide }));
     for (const t of [albedo, lit, dusk]) {
       t.flipY = false;
       t.colorSpace = THREE.SRGBColorSpace;
@@ -260,6 +277,7 @@ export class StallView {
     this.buildGun();
     this.buildMoths();
     this.buildParticles();
+    this.buildVases();
   }
 
   mesh(geo, mat, parent = this.scene, cast = true) {
@@ -659,10 +677,21 @@ export class StallView {
   }
 
   buildParticles() {
-    this.chipMesh = new THREE.InstancedMesh(new THREE.BoxGeometry(0.006, 0.006, 0.002), new THREE.MeshStandardMaterial({ color: 0xcdb48a, roughness: 0.9 }), 48);
+    this.chipMesh = new THREE.InstancedMesh(new THREE.BoxGeometry(0.006, 0.006, 0.002), new THREE.MeshStandardMaterial({ color: 0xcdb48a, roughness: 0.9 }), 96);
     this.chipMesh.count = 0;
     this.chipMesh.frustumCulled = false;
     this.scene.add(this.chipMesh);
+  }
+
+  /** The prizes on the shelf: live, so they can rock and fall. */
+  buildVases() {
+    this.vases = VASES.map((v, i) => {
+      const mesh = this.mesh(this.assets.vaseGeos[i], this.assets.vaseMats[i]);
+      mesh.position.set(v.x, v.y, v.z);
+      return { mesh, a: 0, aV: 0, dirX: 0, dirZ: 1, fallAt: -1 };
+    });
+    this.wheelJolt = 0;
+    this.lastTouch = new Map(); // cork id -> where it last struck something
   }
 
   // ------------------------------------------------------------------ reacting to the simulation
@@ -684,13 +713,53 @@ export class StallView {
         this.burst(e.x, e.y, e.z + 0.02, e.perfect ? 12 : 7, colour);
         if (e.target === "bell") this.bellSwing.aV += e.rung ? 9 : 5;
         if (e.target.startsWith("p")) this.plateAngle[Number(e.target[1])].aV = -14;
+        if (e.ricochet) {
+          // A ricochet: sparks all along the way the cork came off the last thing it struck,
+          // a shower of them at the target, and the border lamps run.
+          const from = this.lastTouch.get(e.id);
+          if (from) {
+            for (let i = 1; i <= 9; i++) {
+              const f = i / 10;
+              this.spark(from[0] + (e.x - from[0]) * f, from[1] + (e.y - from[1]) * f, from[2] + (e.z - from[2]) * f, 0.25 + f * 0.35);
+            }
+          }
+          this.burst(e.x, e.y, e.z + 0.02, 16, "#ffd35a", 1.25);
+          this.chaseUntil = Math.max(this.chaseUntil, this.time + 1.5);
+          this.chaseKind = Math.max(this.chaseKind, 1);
+          this.pulse = Math.max(this.pulse, 0.22);
+        }
+        this.lastTouch.set(e.id, [e.x, e.y, e.z]);
         break;
       }
       case "bounce":
+        this.lastTouch.set(e.id, [e.x, e.y, e.z]);
+        if (this.lastTouch.size > 40) this.lastTouch.delete(this.lastTouch.keys().next().value);
         if (e.what === "board" && e.s > 3) this.burst(e.x, e.y, e.z + 0.01, 3, "#3a5a48");
         break;
       case "reset":
         this.camAt = this.time;
+        break;
+      case "prop":
+        if (e.what === "lamp") {
+          // Glass and a last spark of filament.
+          if (e.lit) this.burst(e.x, e.y, e.z, 9, "#ffd98a", 0.9);
+        } else if (e.what === "vase") {
+          const vase = this.vases[e.i];
+          const n = Math.hypot(e.vx ?? 0, e.vz ?? 1) || 1;
+          vase.dirX = -(e.vz ?? 0) / n;
+          vase.dirZ = (e.vx ?? 0) / n;
+          vase.aV += 5.5;
+          if (e.broke) {
+            vase.fallAt = this.time;
+            this.burst(e.x - 0.03, e.y, e.z, 16, "#" + this.assets.vaseMats[e.i].color.getHexString(), 1.2);
+          }
+        } else if (e.what === "chalk") {
+          this.burst(e.x + 0.02, e.y, e.z, 14, "#efeadd", 0.45, true);
+          this.assets.chalk.smudge((CHALK_BOARD.z + CHALK_BOARD.w / 2 - e.z) / CHALK_BOARD.w, (CHALK_BOARD.y + CHALK_BOARD.h / 2 - e.y) / CHALK_BOARD.h);
+        } else if (e.what === "wheel") {
+          this.wheelJolt = 1;
+          this.burst(e.x + 0.02, e.y, e.z, 8, "#ffcf70", 1);
+        }
         break;
       default:
         break;
@@ -698,11 +767,21 @@ export class StallView {
     void sim;
   }
 
-  burst(x, y, z, n, colour) {
+  /** One gold spark that hangs for a moment where it was struck. */
+  spark(x, y, z, life) {
+    if (this.particles.length >= 96) this.particles.shift();
+    this.particles.push({ p: new THREE.Vector3(x, y, z), v: new THREE.Vector3((Math.random() - 0.5) * 0.3, 0.15 + Math.random() * 0.3, (Math.random() - 0.5) * 0.3), life, c: SPARK, spin: Math.random() * 6, dust: true });
+  }
+
+  /** Chips flying off a knock. `power` scales how far they go; `dust` hangs in the air instead of falling. */
+  burst(x, y, z, n, colour, power = 1, dust = false) {
     const c = new THREE.Color(colour);
     for (let i = 0; i < n; i++) {
-      if (this.particles.length >= 48) this.particles.shift();
-      this.particles.push({ p: new THREE.Vector3(x, y, z), v: new THREE.Vector3((Math.random() - 0.5) * 1.6, 0.4 + Math.random() * 1.6, 0.5 + Math.random() * 1.4), life: 0.5 + Math.random() * 0.4, c, spin: Math.random() * 6 });
+      if (this.particles.length >= 96) this.particles.shift();
+      const v = dust
+        ? new THREE.Vector3(0.25 + Math.random() * 0.5, (Math.random() - 0.3) * 0.5, (Math.random() - 0.5) * 0.7)
+        : new THREE.Vector3((Math.random() - 0.5) * 1.6 * power, (0.4 + Math.random() * 1.6) * power, (0.5 + Math.random() * 1.4) * power);
+      this.particles.push({ p: new THREE.Vector3(x, y, z), v, life: (dust ? 0.9 : 0.5) + Math.random() * 0.4, c, spin: Math.random() * 6, dust });
     }
   }
 
@@ -735,6 +814,11 @@ export class StallView {
     this.bellSwing.a = 0;
     this.bellSwing.aV = 0;
     this.gun.kick = this.gun.kickV = this.gun.pitch = this.gun.pitchV = this.gun.roll = this.gun.rollV = 0;
+    for (const vase of this.vases) {
+      vase.a = vase.aV = 0;
+      vase.fallAt = -1;
+    }
+    this.wheelJolt = 0;
   }
 
   setAim(x, y) {
@@ -823,14 +907,35 @@ export class StallView {
       } else if (b.group === "festoon") {
         L = 0.9 + 0.1 * Math.sin(wall * 1.3 + i);
       }
+      // A lamp a cork has struck: dead, then it stutters back to life.
+      if (i < LAMPS.length && t < sim.lampOut[i]) {
+        const left = sim.lampOut[i] - t;
+        L = left < 0.6 && Math.sin(wall * 55 + i) > 0.2 ? L * 0.7 : 0;
+      }
       this.bulbLevels[i] = L;
     }
     this.bulbs.geometry.attributes.aLevel.needsUpdate = true;
+
+    // ---- the prizes: a knocked one rocks on its foot; a second knock has it off the shelf.
+    for (let i = 0; i < this.vases.length; i++) {
+      const vase = this.vases[i];
+      const down = sim.vaseDown[i] >= 0;
+      if (!frozen) {
+        vase.aV += (-vase.a * 90 - vase.aV * 5) * dt;
+        vase.a += vase.aV * dt;
+      }
+      vase.mesh.visible = !down;
+      vase.mesh.rotation.set(vase.a * 0.16 * vase.dirX, 0, vase.a * 0.16 * vase.dirZ);
+    }
+    this.wheelJolt = Math.max(0, this.wheelJolt - dt * 2.4);
 
     // ---- the drive: flywheel, wheels, belt, chain.
     const mt = mech(t);
     const beltTravel = mt * 0.42;
     this.flywheel.rotation.x = -beltTravel / 0.085;
+    // A cork off the drive: the flywheel shudders on its axle for a moment.
+    this.flywheel.rotation.z = Math.sin(wall * 46) * 0.05 * this.wheelJolt;
+    this.flywheel.position.y = DRIVE.flywheel.y + Math.sin(wall * 61) * 0.006 * this.wheelJolt;
     this.wheels.forEach((w, i) => (w.rotation.x = -beltTravel / DRIVE.wheels[i].r + i));
     A.belt.offset.y = -beltTravel / 0.14;
     const chainDist = CHAIN.speed * mt;
@@ -1059,7 +1164,8 @@ export class StallView {
       const p = this.particles[i];
       if (!frozen) {
         p.life -= dt;
-        p.v.y -= 9.8 * dt;
+        p.v.y -= (p.dust ? 0.6 : 9.8) * dt;
+        if (p.dust) p.v.multiplyScalar(1 - 2.2 * dt);
         p.p.addScaledVector(p.v, dt);
       }
       if (p.life <= 0) {
@@ -1112,6 +1218,13 @@ export class StallView {
       look = [0.1, 1.14, -1.52];
       fov = 44;
       focus = 0.86;
+    } else if (this.viewName === "board") {
+      // The chalk board on the left wall, nearly square on, from far enough off to see all of it.
+      const away = Math.min(2.3, Math.max(1.05, 0.4 / (Math.tan(THREE.MathUtils.degToRad(20)) * aspect)));
+      pos = [CHALK_BOARD.x + away, 1.84, CHALK_BOARD.z + 0.27 * away];
+      look = [CHALK_BOARD.x, CHALK_BOARD.y, CHALK_BOARD.z];
+      fov = 40;
+      focus = away * 1.03;
     } else if (this.viewName === "gun") {
       pos = [-0.32, 1.3, -0.12];
       look = [0.4, 1.07, -0.34];

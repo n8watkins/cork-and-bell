@@ -125,6 +125,7 @@ export class Sound {
     if (!this.ready) return;
     const pan = (e.x ?? 0) * 0.5;
     const rise = 1 + Math.min(e.streak ?? 0, 10) * 0.035; // a run of hits climbs in pitch
+    if (e.ricochet) this.ricochet(pan);
     if (e.target === "bell") return this.bell(e.rung);
     if (e.target === "jam") {
       this.burst(0.5, 0.06, { freq: 700 });
@@ -151,7 +152,7 @@ export class Sound {
       this.metal(440 * rise, [1, 1.72, 2.9, 4.6], 0.5, 0.5, pan);
     }
     if (e.perfect) this.tone(2093, 0.12, 0.3, { when: 0.03, type: "sine" });
-    if (e.ricochet) this.tone(1320, 0.14, 0.18, { when: 0.05, slide: 1.5 });
+
   }
 
   bell(rung) {
@@ -177,6 +178,56 @@ export class Sound {
       this.tone(260, 0.3 * v, 0.035, { slide: 0.7, pan });
       this.burst(0.25 * v, 0.02, { freq: 1500, q: 0.8 });
     }
+  }
+
+  /** A challenge done: a short rising flourish on the stall's little bells. */
+  task() {
+    if (!this.ready) return;
+    [784, 988, 1175, 1568].forEach((f, i) => this.metal(f, [1, 2.76], 0.22, 0.5 + i * 0.12, 0, 0.1 + i * 0.085));
+    this.burst(0.12, 0.25, { when: 0.42, freq: 5200, q: 0.8 });
+  }
+
+  /** A ricochet that scored: the whine of a cork coming off at an angle, then two bright notes going up. */
+  ricochet(pan = 0) {
+    if (!this.ready) return;
+    this.tone(2600, 0.2, 0.2, { slide: 0.32, pan, type: "triangle" });
+    this.tone(2600 * 1.5, 0.07, 0.2, { slide: 0.32, pan });
+    this.metal(1568, [1, 2.76], 0.26, 0.5, pan, 0.16);
+    this.metal(2349, [1, 2.76], 0.3, 0.8, pan, 0.27);
+  }
+
+  /** A cork off something that is not a target: each thing in the stall has its own voice. */
+  prop(e) {
+    if (!this.ready) return;
+    const pan = (e.x ?? 0) * 0.5;
+    if (e.what === "lamp") {
+      // Thin glass: a bright tinkle, a few shards after it, and the filament going.
+      this.burst(0.3, 0.04, { freq: 6500, q: 1.2, type: "highpass" });
+      [3136, 4186, 5274, 3729].forEach((f, i) => this.tone(f * (0.97 + Math.random() * 0.06), 0.14, 0.16 + i * 0.05, { when: i * 0.035, pan }));
+      this.tone(90, 0.12, 0.25, { type: "sawtooth", slide: 0.5, when: 0.02 });
+    } else if (e.what === "vase") {
+      // Turned wood and paint: a hollow knock. Off the shelf: a clatter on the boards below.
+      this.tone(e.broke ? 310 : 420, 0.45, 0.09, { slide: 0.8, pan, type: "triangle" });
+      this.burst(0.3, 0.03, { freq: 1800, q: 0.9 });
+      if (e.broke) {
+        for (let i = 0; i < 4; i++) this.tone(240 + Math.random() * 260, 0.3 / (1 + i * 0.4), 0.06, { when: 0.24 + i * 0.07 + Math.random() * 0.02, pan, type: "triangle", slide: 0.85 });
+        this.burst(0.35, 0.12, { when: 0.24, freq: 2600, q: 0.6 });
+      }
+    } else if (e.what === "chalk") {
+      // Slate on a wall: a flat slap and a soft puff.
+      this.tone(210, 0.4, 0.05, { slide: 0.7, pan });
+      this.burst(0.22, 0.22, { freq: 900, q: 0.4, attack: 0.02 });
+    } else if (e.what === "wheel") {
+      // Cast iron, turning: it rings, and the belt slaps once.
+      this.metal(e.i === 0 ? 392 : 587, [1, 2.4, 3.9, 5.3], 0.3, 0.9, pan);
+      this.burst(0.25, 0.05, { when: 0.05, freq: 600, q: 0.8 });
+    }
+  }
+
+  /** The bell rung in the last second of the round: three quick peals, the landlord calling time. */
+  lastOrders() {
+    if (!this.ready) return;
+    for (let i = 0; i < 3; i++) [1568, 1568 * 2.4, 1568 * 3.6].forEach((f, k) => this.tone(f, 0.3 / (1 + k * 0.6), 0.7, { when: 0.12 + i * 0.2 }));
   }
 
   rest() {
