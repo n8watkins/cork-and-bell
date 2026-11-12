@@ -1,0 +1,57 @@
+{
+  "name": "cork-and-bell",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Cork & Bell: a 1930s fairground cork-gun shooting gallery. Solo in the browser, or a battle of two to four stalls.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/n8watkins/cork-and-bell.git"
+  },
+  "exports": {
+    ".": "./party.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "party.js",
+    "index.html",
+    "game",
+    "tools/*.mjs",
+    "LICENSE",
+    "README.md"
+  ],
+  "scripts": {
+    "dev": "wrangler dev --local --env local --port 8791",
+    "dev:lan": "node scripts/dev-lan.mjs",
+    "build": "node scripts/build-public.mjs",
+    "assets:list": "node scripts/build-public.mjs --list",
+    "deploy": "wrangler deploy --env=''",
+    "test": "vitest run",
+    "playtest": "node tools/playtest.mjs",
+    "playtest:battle": "node tools/playtest-battle.mjs",
+    "test:room": "node node_modules/n8-party-games/party-kit/test/e2e-room.mjs",
+    "test:production": "node node_modules/n8-party-games/party-kit/test/e2e-production.mjs",
+    "test:turnstile": "node node_modules/n8-party-games/party-kit/test/e2e-turnstile.mjs",
+    "fps": "node tools/gpu-fps.mjs"
+  },
+  "devDependencies": {
+    "n8-party-games": "github:n8watkins/n8-party-games#12df6a9710f2c904376422f9b3f7e11655dedc9c",
+    "playwright": "^1.64.1",
+    "three": "^0.186.0",
+    "vitest": "4.1",
+    "wrangler": "^4.157.0"
+  },
+  "peerDependencies": {
+    "n8-party-games": "*"
+  },
+  "peerDependenciesMeta": {
+    "n8-party-games": {
+      "optional": true
+    }
+  },
+  "allowScripts": {
+    "esbuild@0.28.2": true,
+    "workerd@1.20261109.1": true
+  }
+}

@@ -1,0 +1,8 @@
+node_modules/
+.wrangler/
+dist/
+*.blend1
+tools/blender/out/
+tools/blender/layout.json
+shots/
+.chrome-gpu-profile/

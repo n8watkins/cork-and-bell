@@ -1,6 +1,6 @@
 // Measures the frame rate on the real GPU: a headless Chrome on the Windows side (D3D11 on the
 // machine's graphics card), driven from WSL over the debugging protocol (see browser.mjs).
-//   node cork-and-bell/tools/gpu-fps.mjs [name=query ...] [--size=1920x1080] [--dpr=1] [--uncapped=1]
+//   node tools/gpu-fps.mjs [name=query ...] [--size=1920x1080] [--dpr=1] [--uncapped=1]
 // With --uncapped=1 the frame limiter is off, which shows the headroom above the display's rate.
 import { mkdirSync } from "node:fs";
 import { BASE, openBrowser, opt, SHOTS } from "./browser.mjs";

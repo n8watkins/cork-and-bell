@@ -5,24 +5,30 @@ One stall on your own, or a battle of two to four stalls side by side.
 
 The game began from a "cork gallery" build prompt written by Nick Saraev: a stylized shooting gallery of handmade objects at toy scale, lit with baked light and seen through a real lens.
 His prompt is not reproduced here.
-The battle mode, the room kit and all the code in this repository were made for this project.
+The battle mode and all the code in this repository were made for this project.
+
+This repository is the whole game: clone it, install, and play alone or in a battle.
+The rooms (PINs, seats, reconnecting, the waiting room) come from the party kit in [n8watkins/n8-party-games](https://github.com/n8watkins/n8-party-games), which npm fetches as a development dependency.
+That repository is also the party site, which hosts this game beside others through [`party.js`](party.js).
 
 ## Run it
-
-From the repository root:
 
 ```sh
 npm install
 npm run dev          # http://localhost:8791/cork-and-bell/
 npm run dev:lan      # the same, reachable from phones on the same network
-npm test             # the party kit, the simulation and the battle rules
+npm test             # the simulation, the battle rules and the deploy settings
 npm run playtest     # one full solo run with scripted input, with screenshots
 npm run playtest:battle   # four headless players at 150 ms, a drop and rejoin, a rematch
 npm run test:room    # the room over real sockets, no browser (add -- --full=1 to time a whole round)
 ```
 
 Everything is local.
-Nothing is deployed.
+Nothing is deployed; [DEPLOY.md](DEPLOY.md) is the checklist for putting this one game online.
+
+The party kit is a git dependency.
+npm 12 refuses those unless told otherwise, so [`.npmrc`](.npmrc) here sets `allow-git=root`: the one git dependency this package names itself is allowed, and no other.
+While the two repositories are private, `npm install` also needs a GitHub login that can read them.
 
 `wrangler dev` watches this repository and restarts the local server when a file in it changes.
 A restart puts every room back in its lobby, so do not edit files (or save screenshots into the repository) while a battle is being played or tested.
@@ -85,6 +91,9 @@ Decided before any code, and kept everywhere.
 | Path | What it is |
 | --- | --- |
 | `index.html` | The entry file. |
+| `party.js` | What a host needs: the server game definition and the manifest (name, path, players, public files). The party kit's GAME-CONTRACT.md is the contract. |
+| `worker.js`, `wrangler.jsonc` | The game's own site: its files and the party kit's room API, as one Cloudflare Worker (production at the top level, `local` for play and tests). |
+| `scripts/build-public.mjs` | Builds `dist/public`, the only folder served: the files `party.js` lists and the kit's browser files. |
 | `game/shared/layout.js` | The stall in metres: one source for the bake, the simulation and the picture. |
 | `game/shared/sim.js` | One stall, simulated in fixed steps from a seed. Runs in the room and in every browser. |
 | `game/shared/battle.js` | The battle as a party kit game: inputs, bots, attacks, blocks, snapshots. |
@@ -96,7 +105,8 @@ Decided before any code, and kept everywhere.
 | `tools/blender/build_set.py` | Builds the static set by script and bakes it (`tools/blender/run.sh build_set.py 4096 64`). |
 | `tools/*.mjs` | Screenshots, the two playtests, and the real-GPU frame rate measurement. |
 
-Rooms, PINs, the QR code, seats, reconnecting and the lobby come from `../party-kit`; this game adds no join flow of its own.
+Rooms, PINs, the QR code, seats, reconnecting and the waiting room come from the party kit (`node_modules/n8-party-games/party-kit`, served at `/party-kit/client/`); this game adds no join flow of its own.
+The kit's README there has the room rules, the API and what hosting costs.
 
 ### Netcode
 
@@ -111,3 +121,12 @@ Every random choice comes from the room's seed and the shot's number.
 
 Abril Fatface and Playfair Display SC, both under the SIL Open Font License (see `game/fonts/`).
 The page makes no request outside its own origin.
+
+## License
+
+The code is under the [MIT License](LICENSE).
+
+Third-party parts keep their own licenses:
+
+- three.js, in `game/vendor/`, MIT (`LICENSE-three`).
+- Abril Fatface and Playfair Display, in `game/fonts/` and `tools/fonts/`, SIL Open Font License 1.1 (the `OFL-*.txt` files beside them).

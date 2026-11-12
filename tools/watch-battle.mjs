@@ -1,5 +1,5 @@
 // A small look at a two-bot battle through the page's own summary, once a second.
-//   node cork-and-bell/tools/watch-battle.mjs [--seconds=20] [--lag=150]
+//   node tools/watch-battle.mjs [--seconds=20] [--lag=150]
 import { BASE, openBrowser, opt } from "./browser.mjs";
 
 const args = process.argv.slice(2);

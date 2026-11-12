@@ -15,8 +15,8 @@
 import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { HDRLoader } from "three/addons/loaders/HDRLoader.js";
-import { PartyClient } from "../../party-kit/client/party-client.js";
-import { mountLobby } from "../../party-kit/client/lobby.js";
+import { PartyClient } from "/party-kit/client/party-client.js";
+import { mountLobby } from "/party-kit/client/lobby.js";
 import { Sound, buzz } from "./audio.js";
 import { LocalSession, NetSession } from "./session.js";
 import { ATTACK_NAMES, COUNT_IN, game } from "./shared/battle.js";
