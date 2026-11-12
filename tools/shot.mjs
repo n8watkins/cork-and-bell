@@ -1,5 +1,5 @@
 // Takes screenshots of the game in a headless browser and prints frame rates and console errors.
-//   node cork-and-bell/tools/shot.mjs <name>=<query> ... [--size=1920x1080] [--dpr=1] [--wait=ms] [--jpeg=1] [--touch=1] [--win=1]
+//   node tools/shot.mjs <name>=<query> ... [--size=1920x1080] [--dpr=1] [--wait=ms] [--jpeg=1] [--touch=1] [--win=1]
 // Each shot loads /cork-and-bell/?<query>, waits, and saves <out>/<name>.png (see SHOTS in browser.mjs)
 // --win=1 uses Chrome on the Windows side with the real graphics card (see browser.mjs).
 import { mkdirSync } from "node:fs";

@@ -1,7 +1,7 @@
 // The solo playtest: one full run with scripted input in headless Chromium (moves, clicks,
 // held keys), with screenshots of the start, the middle, the end card and the game after a
 // restart. Run the local server first (npm run dev), then: npm run playtest
-//   node cork-and-bell/tools/playtest.mjs [--size=1920x1080] [--touch=1] [--win=0]
+//   node tools/playtest.mjs [--size=1920x1080] [--touch=1] [--win=0]
 // By default it drives Chrome on the Windows side (the real graphics card); --win=0 uses
 // Playwright's Chromium in WSL, which renders in software and is far too slow to judge speed.
 import { mkdirSync } from "node:fs";
