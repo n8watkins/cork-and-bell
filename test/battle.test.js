@@ -465,6 +465,25 @@ describe("a player's corks in the room", () => {
     expect(state.stalls[0].shots).toBe(5);
   });
 
+  it("counts every cork from a page whose clock is a second behind the room's", () => {
+    const seats = [{ seat: 0, name: "Ada", kind: "human" }];
+    const state = game.create({ seed: 5, seats, now: 0, round: 1 });
+    const start = COUNT_IN * 1000;
+    const stamps = [2.189, 2.676, 3.174, 3.667, 4.165];
+    const arrive = [3.333, 3.792, 4.275, 4.733, 5.225].map((t) => start + t * 1000);
+    let now = start;
+    let sent = 0;
+    while (now < start + 7000) {
+      now += 10;
+      while (sent < stamps.length && arrive[sent] <= now) {
+        game.input(state, 0, { f: [stamps[sent], 0, 1.2] }, now);
+        sent++;
+      }
+      game.tick(state, now);
+    }
+    expect(state.stalls[0].shots).toBe(5);
+  });
+
   it("still lets nobody fire faster than a cork can be cocked", () => {
     const seats = [{ seat: 0, name: "Ada", kind: "human" }];
     const state = game.create({ seed: 5, seats, now: 0, round: 1 });
@@ -474,5 +493,18 @@ describe("a player's corks in the room", () => {
     for (let i = 0; i < 10; i++) game.input(state, 0, { f: [2 + i * 0.05, 0, 1.2] }, now);
     for (let i = 0; i < 300; i++) game.tick(state, (now += 10));
     expect(state.stalls[0].shots).toBeLessThanOrEqual(2);
+  });
+
+  it("does not let a page fire faster by stamping its corks further apart than it sends them", () => {
+    const seats = [{ seat: 0, name: "Ada", kind: "human" }];
+    const state = game.create({ seed: 5, seats, now: 0, round: 1 });
+    let now = (COUNT_IN + 1) * 1000;
+    // Sent every 0.35 s for 14 s, stamped 0.5 s apart: forty corks' worth of stamps.
+    for (let i = 0; i < 40; i++) {
+      game.input(state, 0, { f: [1 + i * 0.5, 0, 1.2] }, now);
+      for (let k = 0; k < 35; k++) game.tick(state, (now += 10));
+    }
+    // Honestly a cork can be fired every 0.5 s: 28 in 14 s. A few more once, and no more.
+    expect(state.stalls[0].shots).toBeLessThanOrEqual(32);
   });
 });
