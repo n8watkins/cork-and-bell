@@ -187,6 +187,10 @@ body.pointer #stage {
   display: flex;
   gap: 8px;
 }
+/* Inside a party room (hosted mode) the room keeps the top right corner for its own door button. */
+body.hosted #controls {
+  right: calc(max(16px, env(safe-area-inset-right)) + var(--host-right, 0px));
+}
 /* The sound switch says what it is doing, with a loudspeaker that is crossed out or ringing. */
 #hud .sound {
   display: inline-flex;

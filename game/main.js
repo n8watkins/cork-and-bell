@@ -13,12 +13,14 @@
 //   ?lag=<ms>        simulated latency each way (local test rooms only)
 //   ?quality=low|high
 //   ?grid=row        four stalls in one row on a shared screen (the default is two rows of two)
+//   ?party=1         hosted mode: only inside the frame a party room mounts (party-view.js, hosted.js)
 import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { HDRLoader } from "three/addons/loaders/HDRLoader.js";
 import { PartyClient } from "/party-kit/client/party-client.js";
 import { mountLobby } from "/party-kit/client/lobby.js";
 import { Sound, buzz } from "./audio.js";
+import { HostedParty, findHost } from "./hosted.js";
 import { Scores } from "./scores.js";
 import { LocalSession, NetSession } from "./session.js";
 import { ATTACK_NAMES, COUNT_IN, game } from "./shared/battle.js";
@@ -53,7 +55,17 @@ const quality = P.quality ?? (coarse || Math.min(innerWidth, innerHeight) < 500 
 
 const sound = new Sound();
 const lens = new Lens($("stage"), { quality });
-const party = new PartyClient({ lag: P.lag });
+/** A party room that mounted this page as one of its games, or null: the page on its own. */
+const host = findHost(params);
+const party = host ? new HostedParty(host) : new PartyClient({ lag: P.lag });
+/** Set when the host takes the page away: the frame loop stops and nothing more is drawn. */
+let disposed = false;
+if (host) {
+  document.body.classList.add("hosted");
+  // The host keeps a corner for a button of its own (its door): the switches stand clear of it.
+  $("hud").style.setProperty("--host-right", `${host.inset?.right ?? 0}px`);
+  $("hud").style.setProperty("--host-top", `${host.inset?.top ?? 0}px`);
+}
 let assets = null;
 let views = []; // [{seat, view}]
 let session = null;
@@ -250,7 +262,10 @@ function startLocal(kind, { countIn = COUNT_IN } = {}) {
 function startNet(msg) {
   session?.dispose?.();
   mode = "battle";
-  const mySeat = party.you?.role === "player" ? party.you.seat : -1;
+  let mySeat = party.you?.role === "player" ? party.you.seat : -1;
+  // In a party room someone can arrive while a round is on: they have a seat in the room but
+  // no stall in this round, and watch it as a shared screen does.
+  if (host && !(msg.s ?? msg).seats.some((s) => s.seat === mySeat)) mySeat = -1;
   session = new NetSession(party, msg.s ?? msg, mySeat);
   makeViews(session.seats, mySeat);
   endShownAt = null;
@@ -470,13 +485,16 @@ function showPointer() {
 
 // ------------------------------------------------------------------ the lobby (the party kit's)
 
-const lobby = mountLobby(document.body, party, {
-  title: "Cork & Bell",
-  joinPath: location.pathname,
-  onOpen: () => (hud(), showPointer()),
-  onClose: () => (hud(), showPointer()),
-  // The lobby toy and character slots are left empty on purpose: see party-kit/README.md.
-});
+// A hosted round has no waiting room of its own: the party room it came from is the waiting room.
+const lobby = host
+  ? { root: { hidden: true }, open() {}, close() {} }
+  : mountLobby(document.body, party, {
+      title: "Cork & Bell",
+      joinPath: location.pathname,
+      onOpen: () => (hud(), showPointer()),
+      onClose: () => (hud(), showPointer()),
+      // The lobby toy and character slots are left empty on purpose: see party-kit/README.md.
+    });
 const openLobby = () => lobby.open({ pin: P.join ?? "" });
 $("battle").addEventListener("click", openLobby);
 $("battle-top").addEventListener("click", openLobby);
@@ -764,8 +782,8 @@ function hud() {
   const hint = $("hint");
   if (mode === "attract") hint.textContent = "The house is playing.";
   else if (mode === "four") hint.textContent = "Four stalls, side by side: a battle as the shared screen shows it.";
-  else if (mode === "battle" && session.mySeat < 0) hint.textContent = "Shared screen. Players join on their phones with the PIN.";
-  else if (mode === "battle") hint.textContent = "Three in a row jams a rival. Tap a rival to choose who.";
+  else if (mode === "battle" && session.mySeat < 0) hint.textContent = host ? "The party's round. Points go on the Tonight board." : "Shared screen. Players join on their phones with the PIN.";
+  else if (mode === "battle" && session.seats.length > 1) hint.textContent = "Three in a row jams a rival. Tap a rival to choose who.";
   else hint.textContent = coarse ? "Drag to aim, let go to fire. Aim higher for the far row." : "Click to fire. The cork drops: aim higher for the far row.";
   const rivals = $("rivals");
   rivals.hidden = !(mode === "battle" && session.mySeat >= 0);
@@ -946,6 +964,7 @@ function govern(ms) {
 }
 
 function frame(now) {
+  if (disposed) return;
   requestAnimationFrame(frame);
   const ms = now - lastFrame;
   lastFrame = now;
@@ -1056,7 +1075,9 @@ onEvent = function (e) {
 async function main() {
   lens.resize(innerWidth, innerHeight, devicePixelRatio || 1);
   await load();
+  if (disposed) return; // the host took the page away while the lamps were being lit
   $("loading").classList.add("gone");
+  if (host) return mainHosted();
   if (P.view === "four") startLocal("four");
   else startLocal(P.auto || !P.state || P.state === "end" || P.state === "last" ? "attract" : "solo", { countIn: P.state ? 0 : 1 });
   if (P.state === "last") session.advance(72 + session.time() * -1);
@@ -1095,6 +1116,37 @@ async function main() {
   else if (!P.auto && party.resume()) {
     // An earlier visit left a seat in a room: go back to it.
   }
+  begin();
+}
+
+/**
+ * Hosted mode: the round the party room has already started, for the seats it already has. No
+ * start board, no waiting room and no end card: when the round is over the host takes this page
+ * away and shows the result itself.
+ */
+function mainHosted() {
+  startNet(host.snapshot);
+  // Whatever the room said while this page was loading follows now, in order.
+  host.ready();
+  begin();
+}
+
+// The host is about to remove the frame. A frame's document goes with it in time, but a phone
+// has few WebGL contexts and little memory to wait with: let the lens and the sound go now.
+if (host) {
+  host.dispose = () => {
+    if (disposed) return;
+    disposed = true;
+    session?.dispose?.();
+    for (const v of views) v.view.dispose();
+    views = [];
+    lens.renderer.dispose();
+    lens.renderer.forceContextLoss();
+    sound.ctx?.close().catch(() => {});
+  };
+}
+
+function begin() {
   requestAnimationFrame((t) => {
     lastFrame = t;
     frame(t);
