@@ -105,6 +105,7 @@ Decided before any code, and kept everywhere.
 | `game/shared/sim.js` | One stall, simulated in fixed steps from a seed. Runs in the room and in every browser. |
 | `game/shared/battle.js` | The battle as a party kit game: inputs, bots, attacks, blocks, snapshots. |
 | `game/session.js` | A round as the browser sees it: local (solo, attract) or following a room. |
+| `game/party-view.js`, `game/hosted.js` | The game as a view a party room mounts over itself: see "Inside a party room". |
 | `game/view/` | The picture: the lens (`render.js`), the stall (`stall.js`), hand-painted textures (`paint.js`). |
 | `game/scores.js` | The high scores: the server's board, this device's own best, and what the chalk board shows. |
 | `game/audio.js` | Every sound, made in WebAudio. Silent until you enable it. |
@@ -124,6 +125,32 @@ The room runs every stall's simulation 0.3 s behind its clock, so inputs arrive 
 Each browser runs the same deterministic simulation for an instant picture: its own stall at once, the others 0.45 s behind from the relayed inputs.
 The room's snapshots (twice a second) correct any stall that drifts, and its result is the result.
 Every random choice comes from the room's seed and the shot's number.
+
+### Inside a party room
+
+The party site has one room that holds a group while it goes from game to game.
+When the group votes for Cork & Bell there, the room starts a battle for the seats it already has, and its page mounts this game over itself and takes it away at the end.
+The manifest names the module for that (`lobby: { view: "game/party-view.js" }`), and the party kit's GAME-CONTRACT.md has the host's side.
+
+```js
+import { mount } from "/cork-and-bell/game/party-view.js";
+
+const view = mount(container, { room, you, snapshot, send, now, inset });
+view.events(list);             // what the room's game.tick returned
+view.snapshot(s, now, full);   // the room's periodic snapshot, or a full one after a reconnect
+view.unmount();                // the round is over
+```
+
+- `mount` adds one `<iframe>` to the container and nothing else to the host's page. The frame shows this game's own page in hosted mode (`?party=1`): no start board, no waiting room, no end card, no rematch.
+- The page finds the host on its own frame element and calls it directly (the two are the same origin): the room's clock, the first snapshot, events and snapshots in, inputs out. Whatever the room says while the page is still loading is kept and handed over in order.
+- `unmount` tells the page to let go of its WebGL context and its sound at once, and removes the frame. The page's listeners and timers belong to the frame's document and go with it, so nothing is left on the host's page.
+- `you` decides the picture: a player with a stall in the round gets that stall; a big screen, or someone who came in while the round was on, gets every stall side by side.
+- A party of one gets a round to itself: the same ninety seconds, with nobody to send attacks to. The high score board is not asked for in a party room; it belongs to the game's own page.
+- `inset` is the corner the host keeps for a button of its own; the sound switch stands clear of it.
+- `preload()` (optional) fetches the page's big files while the host's vote is still counting.
+- A host must let its own pages be framed by its own pages (`frame-ancestors 'self'`, `frame-src 'self'`); the party site's headers do.
+
+The page opened on its own, at `/cork-and-bell/`, never takes this path: without a host on its frame element `?party=1` does nothing.
 
 ### Fonts
 
