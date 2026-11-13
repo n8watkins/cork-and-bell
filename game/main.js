@@ -790,7 +790,8 @@ function hud() {
   else if (mode === "battle" && session.seats.length > 1) hint.textContent = "Three in a row jams a rival. Tap a rival to choose who.";
   else hint.textContent = coarse ? "Drag to aim, let go to fire. Aim higher for the far row." : "Click to fire. The cork drops: aim higher for the far row.";
   const rivals = $("rivals");
-  rivals.hidden = !(mode === "battle" && session.mySeat >= 0);
+  // (A round played alone inside a party room is a battle of one: there is nobody to pick.)
+  rivals.hidden = !(mode === "battle" && session.mySeat >= 0 && session.seats.length > 1);
   if (!rivals.hidden && rivals.childElementCount !== session.seats.length - 1) {
     rivals.replaceChildren();
     for (const s of session.seats) {
