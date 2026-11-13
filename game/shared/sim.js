@@ -8,6 +8,8 @@ import { BACK, BELL, CHAIN, CHALK_BOARD, COUNTER, DRIVE, HALF_W, JAM, LAMPS, PEN
 export const DT = 1 / 120;
 export const ROUND_SECONDS = 90;
 export const COCK_SECONDS = 0.5;
+/** The most closer than the cocking time two corks may be judged in a room, when its idea of a player's lag has just fallen (see doFire). */
+export const ARRIVAL_SLACK = 0.15;
 export const CORKS_PER_ROUND = 70;
 export const BELL_FULL = 8;
 /** A hit by a cork that has already bounced off something pays this many times over. */
@@ -196,6 +198,8 @@ export class StallSim {
     this.shots = 0;
     this.hits = 0;
     this.lastFire = -10;
+    /** When the last cork that fired was fired by the player's own clock (see fire). */
+    this.lastWant = -10;
     this.plateDown = PLATES.map(() => -1); // time it fell, or -1 when standing
     this.plateUpAt = PLATES.map(() => -10);
     this.lastReset = resetIndex(-3);
@@ -231,16 +235,27 @@ export class StallSim {
     return this.t >= 0 && this.t < ROUND_SECONDS && !this.over;
   }
 
-  /** Queues a shot. `at` is the round time it was fired; `ax, ay` the aim point on the front row's plane. */
-  fire(at, ax, ay) {
+  /**
+   * Queues a shot. `at` is the round time it was fired; `ax, ay` the aim point on the front row's
+   * plane. A shot that comes in off its time (a room hears a page's cork a little late, or from a
+   * page whose clock is a little ahead) is fired as soon as it can be, but whether the cork was
+   * cocked is judged by the time the page fired it (`want`, which the room bounds), as the page
+   * judged it: otherwise uneven delays on the way could put two corks closer together in the room
+   * than they were when fired, and the room would drop one the player saw fly.
+   */
+  fire(at, ax, ay, want = at, slack = 0) {
     if (!Number.isFinite(at) || !Number.isFinite(ax) || !Number.isFinite(ay)) return false;
-    this.pending.push({ at: Math.max(at, this.t), ax: Math.max(-1.6, Math.min(1.6, ax)), ay: Math.max(0.2, Math.min(3, ay)) });
+    this.pending.push({ at: Math.max(at, this.t), want: Number.isFinite(want) && want !== at ? want : undefined, slack: Math.min(ARRIVAL_SLACK, Math.max(0, slack || 0)), ax: Math.max(-1.6, Math.min(1.6, ax)), ay: Math.max(0.2, Math.min(3, ay)) });
     return true;
   }
 
   doFire(shot) {
     if (this.t < 0 || this.t >= ROUND_SECONDS || this.over) return;
-    if (this.t - this.lastFire < COCK_SECONDS - 0.02 || this.corksLeft <= 0) return;
+    const want = shot.want ?? this.t;
+    // A room judges by stamps moved by the least lag seen so far, which can fall a little between
+    // two corks as the connection settles: that much slack (up to ARRIVAL_SLACK), and no more.
+    if (want - this.lastWant < COCK_SECONDS - 0.02 - (shot.slack ?? 0) || this.corksLeft <= 0) return;
+    this.lastWant = want;
     this.lastFire = this.t;
     this.corksLeft -= 1;
     const n = this.shots++;

@@ -8,6 +8,8 @@ import { BELL_FULL, COCK_SECONDS, JAM_MAX_SECONDS, RICOCHET_TIMES, ROUND_SECONDS
 import { PENDULUMS } from "./layout.js";
 
 export const COUNT_IN = 3;
+/** The furthest ahead of the room's clock a page's cork stamps are believed to be, in seconds. */
+const MAX_AHEAD = 0.6;
 export const SIM_DELAY = 0.3; // the room simulates this far behind its clock, so inputs arrive before their time
 export const WARNING = 1.5;
 export const MOTHS_SECONDS = 4;
@@ -36,6 +38,8 @@ export function createBattle({ seed, seats, now, round = 1, delay = SIM_DELAY, b
     seats: seats.map((s) => ({ seat: s.seat, name: s.name, kind: s.kind })),
     stalls: {},
     picks: {},
+    /** seat -> the least lag its cork stamps have shown, in seconds of round time (input). */
+    lag: {},
     bots: {},
     botSkill,
     attacks: [],
@@ -128,9 +132,24 @@ export const game = {
     if (!sim || !data || typeof data !== "object") return;
     if (Array.isArray(data.f) && data.f.length === 3) {
       const tNow = roundTime(state, now);
+      const stamp = Number(data.f[0]);
+      if (!Number.isFinite(stamp)) return;
       // The client's own timestamp is used when it is believable, so its picture and the room agree.
-      const at = Math.max(tNow - 0.5, Math.min(tNow + 0.08, Number(data.f[0])));
-      if (!sim.fire(at, Number(data.f[1]), Number(data.f[2]))) return;
+      const at = Math.max(tNow - 0.5, Math.min(tNow + 0.08, stamp));
+      // Whether the cork was cocked is judged by when the page fired it, in the room's time: its
+      // stamp moved by the least lag this player's stamps have shown (state.lag). A page's idea of
+      // the room's clock can be off by a second or more (it was 0.25 s ahead and 1 s behind in two
+      // runs of the party room's test:cork), and judging by when corks arrived dropped corks the
+      // player saw fly. The least lag only falls, so a stamp can never be judged later than it
+      // arrived: sending corks faster than they were stamped gains nothing.
+      // (A page more than MAX_AHEAD ahead is not believed: corks stamped faster than they are sent
+      // cannot buy more than a few, once.)
+      const before = state.lag[seat] ?? Infinity;
+      const lag = (state.lag[seat] = Math.max(-MAX_AHEAD, Math.min(before, tNow - stamp)));
+      const want = Math.min(tNow, stamp + lag);
+      // When the least lag has just fallen, the last cork was judged that much late: allow it.
+      const slack = Number.isFinite(before) ? Math.max(0, before - lag) : 0;
+      if (!sim.fire(at, Number(data.f[1]), Number(data.f[2]), want, slack)) return;
       state.out.push({ k: "f", seat, at: Math.max(at, sim.t), ax: data.f[1], ay: data.f[2] });
     } else if (Number.isInteger(data.pick)) {
       if (data.pick === -1) delete state.picks[seat];
@@ -282,6 +301,7 @@ export function dumpStall(sim) {
     ...sim.summary(),
     t: r3(sim.t),
     lastFire: r3(sim.lastFire),
+    lastWant: r3(sim.lastWant),
     plateDown: sim.plateDown.map(r3),
     plateUpAt: sim.plateUpAt.map(r3),
     starLap: sim.starLap,
@@ -310,6 +330,7 @@ export function loadStall(sim, d) {
   sim.over = !!d.over;
   sim.t = d.t;
   sim.lastFire = d.lastFire;
+  sim.lastWant = d.lastWant ?? d.lastFire;
   sim.plateDown = d.plateDown.slice();
   sim.plateUpAt = d.plateUpAt.slice();
   sim.starLap = d.starLap.slice();
