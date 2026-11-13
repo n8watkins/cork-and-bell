@@ -416,3 +416,42 @@ describe("the battle", () => {
     expect(now).toBeLessThan(8000);
   });
 });
+
+describe("a player's corks in the room", () => {
+  // The page fires only when its own cork is cocked (COCK_SECONDS apart, by its clock) and
+  // stamps each cork with that time. The room takes the stamp when it is believable. A cork that
+  // reaches the room later than the room's own delay (SIM_DELAY) used to be fired at the moment
+  // it arrived instead, so a little jitter on the way could put two corks closer than the cocking
+  // time in the room, which then dropped one: the page showed five corks and the room counted
+  // four. Seen on every run of the party room's test:cork over a slow link.
+  it("counts every cork the page fired, however unevenly they arrive", () => {
+    const seats = [{ seat: 0, name: "Ada", kind: "human" }];
+    const state = game.create({ seed: 5, seats, now: 0, round: 1 });
+    const start = (COUNT_IN + 1) * 1000;
+    // Fired 0.5 s apart by the page's clock; each arrives 0.32 to 0.42 s later, unevenly.
+    const lag = [0.42, 0.32, 0.41, 0.32, 0.4];
+    const shots = lag.map((l, i) => ({ stamp: 1 + i * 0.5, arrive: start + (i * 0.5 + l) * 1000 }));
+    let now = start;
+    let sent = 0;
+    while (now < start + 6000) {
+      now += 10;
+      while (sent < shots.length && shots[sent].arrive <= now) {
+        game.input(state, 0, { f: [shots[sent].stamp, 0, 1.2] }, now);
+        sent++;
+      }
+      game.tick(state, now);
+    }
+    expect(state.stalls[0].shots).toBe(5);
+  });
+
+  it("still lets nobody fire faster than a cork can be cocked", () => {
+    const seats = [{ seat: 0, name: "Ada", kind: "human" }];
+    const state = game.create({ seed: 5, seats, now: 0, round: 1 });
+    let now = (COUNT_IN + 2) * 1000;
+    game.tick(state, now);
+    // Ten corks at once, stamped as close together as the room will believe.
+    for (let i = 0; i < 10; i++) game.input(state, 0, { f: [2 + i * 0.05, 0, 1.2] }, now);
+    for (let i = 0; i < 300; i++) game.tick(state, (now += 10));
+    expect(state.stalls[0].shots).toBeLessThanOrEqual(2);
+  });
+});

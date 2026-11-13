@@ -196,6 +196,8 @@ export class StallSim {
     this.shots = 0;
     this.hits = 0;
     this.lastFire = -10;
+    /** When the last cork that fired was fired by the player's own clock (see fire). */
+    this.lastWant = -10;
     this.plateDown = PLATES.map(() => -1); // time it fell, or -1 when standing
     this.plateUpAt = PLATES.map(() => -10);
     this.lastReset = resetIndex(-3);
@@ -231,16 +233,25 @@ export class StallSim {
     return this.t >= 0 && this.t < ROUND_SECONDS && !this.over;
   }
 
-  /** Queues a shot. `at` is the round time it was fired; `ax, ay` the aim point on the front row's plane. */
+  /**
+   * Queues a shot. `at` is the round time it was fired; `ax, ay` the aim point on the front row's
+   * plane. A shot that comes in after its time (a room hears a page's cork a little late) is fired
+   * as soon as it can be, but whether the cork was cocked is judged by the time it was fired
+   * (`want`), as the page that fired it judged it: otherwise uneven delays on the way could put
+   * two corks closer together in the room than they were when fired, and the room would drop one
+   * the player saw fly.
+   */
   fire(at, ax, ay) {
     if (!Number.isFinite(at) || !Number.isFinite(ax) || !Number.isFinite(ay)) return false;
-    this.pending.push({ at: Math.max(at, this.t), ax: Math.max(-1.6, Math.min(1.6, ax)), ay: Math.max(0.2, Math.min(3, ay)) });
+    this.pending.push({ at: Math.max(at, this.t), want: at, ax: Math.max(-1.6, Math.min(1.6, ax)), ay: Math.max(0.2, Math.min(3, ay)) });
     return true;
   }
 
   doFire(shot) {
     if (this.t < 0 || this.t >= ROUND_SECONDS || this.over) return;
-    if (this.t - this.lastFire < COCK_SECONDS - 0.02 || this.corksLeft <= 0) return;
+    const want = Math.min(shot.want ?? this.t, this.t);
+    if (want - this.lastWant < COCK_SECONDS - 0.02 || this.corksLeft <= 0) return;
+    this.lastWant = want;
     this.lastFire = this.t;
     this.corksLeft -= 1;
     const n = this.shots++;

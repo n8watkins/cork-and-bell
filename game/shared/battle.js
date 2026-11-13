@@ -282,6 +282,7 @@ export function dumpStall(sim) {
     ...sim.summary(),
     t: r3(sim.t),
     lastFire: r3(sim.lastFire),
+    lastWant: r3(sim.lastWant),
     plateDown: sim.plateDown.map(r3),
     plateUpAt: sim.plateUpAt.map(r3),
     starLap: sim.starLap,
@@ -310,6 +311,7 @@ export function loadStall(sim, d) {
   sim.over = !!d.over;
   sim.t = d.t;
   sim.lastFire = d.lastFire;
+  sim.lastWant = d.lastWant ?? d.lastFire;
   sim.plateDown = d.plateDown.slice();
   sim.plateUpAt = d.plateUpAt.slice();
   sim.starLap = d.starLap.slice();
