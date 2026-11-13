@@ -214,8 +214,11 @@ $("initials").addEventListener("submit", async (e) => {
 // ------------------------------------------------------------------ sessions
 
 function makeViews(seats, mySeat) {
-  const many = seats.length > 1 && (mySeat < 0 || mode === "four");
-  const shown = many ? seats : seats.filter((s) => s.seat === mySeat);
+  // Whoever holds no stall in the round watches all of it: side by side when there are several,
+  // and the one stall when a party of one is playing alone under a big screen.
+  const watching = mySeat < 0 || mode === "four";
+  const many = seats.length > 1 && watching;
+  const shown = watching ? seats : seats.filter((s) => s.seat === mySeat);
   if (views.length === shown.length && views.every((v) => v.many === many)) {
     // The same stalls, a new round: keep the pictures, so taking the gun or restarting is instant.
     views.forEach((v, i) => {
@@ -752,7 +755,8 @@ function fmtTime(t) {
 
 function hud() {
   if (!session) return;
-  const playing = mode === "solo" || (mode === "battle" && session.mySeat >= 0);
+  // (A screen watching a round played alone shows that stall whole, ticket and all.)
+  const playing = mode === "solo" || (mode === "battle" && (session.mySeat >= 0 || session.seats.length === 1));
   // The house's stall with nobody at the gun is the start screen: the board with the three choices.
   // (With ?auto=1 the bot is the show, and the tally stays up for it.)
   const start = mode === "attract" && !P.auto;
