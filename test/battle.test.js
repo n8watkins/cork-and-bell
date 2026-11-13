@@ -444,6 +444,27 @@ describe("a player's corks in the room", () => {
     expect(state.stalls[0].shots).toBe(5);
   });
 
+  it("counts every cork from a page whose clock is still a little ahead of the room's", () => {
+    // The party room's test:cork caught it: a page early in a round, its clock estimate 0.2 to
+    // 0.3 s ahead, stamps five corks 0.5 s apart; they arrive at the room 0.45 to 0.56 s apart.
+    const seats = [{ seat: 0, name: "Ada", kind: "human" }];
+    const state = game.create({ seed: 5, seats, now: 0, round: 1 });
+    const start = COUNT_IN * 1000;
+    const stamps = [1.543, 2.04, 2.526, 3.035, 3.533];
+    const arrive = [1.338, 1.793, 2.245, 2.805, 3.265].map((t) => start + t * 1000);
+    let now = start;
+    let sent = 0;
+    while (now < start + 6000) {
+      now += 10;
+      while (sent < stamps.length && arrive[sent] <= now) {
+        game.input(state, 0, { f: [stamps[sent], 0, 1.2] }, now);
+        sent++;
+      }
+      game.tick(state, now);
+    }
+    expect(state.stalls[0].shots).toBe(5);
+  });
+
   it("still lets nobody fire faster than a cork can be cocked", () => {
     const seats = [{ seat: 0, name: "Ada", kind: "human" }];
     const state = game.create({ seed: 5, seats, now: 0, round: 1 });

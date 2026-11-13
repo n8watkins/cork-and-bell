@@ -128,9 +128,16 @@ export const game = {
     if (!sim || !data || typeof data !== "object") return;
     if (Array.isArray(data.f) && data.f.length === 3) {
       const tNow = roundTime(state, now);
+      const stamp = Number(data.f[0]);
       // The client's own timestamp is used when it is believable, so its picture and the room agree.
-      const at = Math.max(tNow - 0.5, Math.min(tNow + 0.08, Number(data.f[0])));
-      if (!sim.fire(at, Number(data.f[1]), Number(data.f[2]))) return;
+      const at = Math.max(tNow - 0.5, Math.min(tNow + 0.08, stamp));
+      // Whether the cork was cocked is judged by the page's own spacing, which it enforced: early
+      // in a round a page's estimate of the room's clock can still be a few tenths of a second
+      // ahead, and clamping would put its corks as close together as they happened to arrive.
+      // The wider window still lets nobody fire faster than a cork can be cocked, bar one extra
+      // cork once.
+      const want = Math.max(tNow - 0.5, Math.min(tNow + COCK_SECONDS * 0.7, stamp));
+      if (!sim.fire(at, Number(data.f[1]), Number(data.f[2]), want)) return;
       state.out.push({ k: "f", seat, at: Math.max(at, sim.t), ax: data.f[1], ay: data.f[2] });
     } else if (Number.isInteger(data.pick)) {
       if (data.pick === -1) delete state.picks[seat];
