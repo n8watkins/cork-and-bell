@@ -150,7 +150,12 @@ export const game = {
       // When the least lag has just fallen, the last cork was judged that much late: allow it.
       const slack = Number.isFinite(before) ? Math.max(0, before - lag) : 0;
       if (!sim.fire(at, Number(data.f[1]), Number(data.f[2]), want, slack)) return;
-      state.out.push({ k: "f", seat, at: Math.max(at, sim.t), ax: data.f[1], ay: data.f[2] });
+      // Every screen mirrors this stall from what is relayed here, and the stall has not judged the
+      // cork yet (it does when the cork's time comes). So a screen is sent all the stall will judge
+      // it by, `want` and `slack`, and the cork's number in the stall's line (`n`), which tells a
+      // screen that was rebuilt from a snapshot whether the snapshot already had this cork.
+      const shot = sim.pending[sim.pending.length - 1];
+      state.out.push({ k: "f", seat, n: shot.n, at: shot.at, want: shot.want, slack: shot.slack, ax: data.f[1], ay: data.f[2] });
     } else if (Number.isInteger(data.pick)) {
       if (data.pick === -1) delete state.picks[seat];
       else if (state.stalls[data.pick] && data.pick !== seat) state.picks[seat] = data.pick;
@@ -295,13 +300,21 @@ export function standings(seats, stallOf) {
 
 const r3 = (v) => Math.round(v * 1000) / 1000;
 
-/** Everything needed to rebuild a stall on a screen that has just (re)joined. */
+/**
+ * Everything needed to rebuild a stall on a screen that has just (re)joined, or whose picture of
+ * it has drifted. What decides which corks fly is sent exactly, not rounded: the stall's time (its
+ * steps then fall where the room's do), when the last cork was fired, the corks waiting for their
+ * time and the corks in the air. A rebuilt stall goes on to fire the corks the room's will.
+ */
 export function dumpStall(sim) {
   return {
     ...sim.summary(),
-    t: r3(sim.t),
+    t: sim.t,
     lastFire: r3(sim.lastFire),
-    lastWant: r3(sim.lastWant),
+    lastWant: sim.lastWant,
+    queued: sim.queued,
+    pending: sim.pending.map((shot) => ({ ...shot })),
+    flying: sim.corks.map((c) => ({ ...c, p: c.p.slice(), v: c.v.slice() })),
     plateDown: sim.plateDown.map(r3),
     plateUpAt: sim.plateUpAt.map(r3),
     starLap: sim.starLap,
@@ -354,8 +367,9 @@ export function loadStall(sim, d) {
     sim.vaseKnocks[i] = n;
     sim.vaseDown[i] = down;
   }
-  sim.corks = [];
-  sim.pending = [];
+  sim.corks = (d.flying ?? []).map((c) => ({ ...c, p: c.p.slice(), v: c.v.slice() }));
+  sim.pending = (d.pending ?? []).map((shot) => ({ ...shot }));
+  sim.queued = d.queued ?? 0;
   sim.lastReset = resetIndex(d.t);
   return sim;
 }

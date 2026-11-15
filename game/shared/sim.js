@@ -222,6 +222,8 @@ export class StallSim {
     this.corks = []; // in flight
     this.rested = []; // where corks came to rest: they stay for the round
     this.pending = []; // fire inputs waiting for their time
+    /** How many corks have been queued so far (fired or not): each one's number is its place in that line. */
+    this.queued = 0;
     this.events = [];
     this.over = false;
   }
@@ -242,16 +244,36 @@ export class StallSim {
    * cocked is judged by the time the page fired it (`want`, which the room bounds), as the page
    * judged it: otherwise uneven delays on the way could put two corks closer together in the room
    * than they were when fired, and the room would drop one the player saw fly.
+   *
+   * A `want` that is given is always the one used, also when it equals `at`: a screen that
+   * mirrors a room's stall passes on the room's own `want` and `slack` for each cork, and must
+   * come to the room's verdict however late and bunched the corks reach it. Without a `want` the
+   * cork is judged by the stall's own time when it fires.
    */
-  fire(at, ax, ay, want = at, slack = 0) {
+  fire(at, ax, ay, want, slack = 0) {
     if (!Number.isFinite(at) || !Number.isFinite(ax) || !Number.isFinite(ay)) return false;
-    this.pending.push({ at: Math.max(at, this.t), want: Number.isFinite(want) && want !== at ? want : undefined, slack: Math.min(ARRIVAL_SLACK, Math.max(0, slack || 0)), ax: Math.max(-1.6, Math.min(1.6, ax)), ay: Math.max(0.2, Math.min(3, ay)) });
+    this.queue({ at, ax, ay, want: Number.isFinite(want) ? want : undefined, slack: Math.min(ARRIVAL_SLACK, Math.max(0, slack || 0)) });
     return true;
+  }
+
+  /**
+   * Queues a shot that is known to be cocked: the player's own page, which lets a cork go only
+   * when its own lever is cocked (NetSession.canFire) and pictures it at once. The room judges the
+   * same cork for itself. The stall still fires it only inside the round and while a cork is left.
+   */
+  fireCocked(at, ax, ay) {
+    if (!Number.isFinite(at) || !Number.isFinite(ax) || !Number.isFinite(ay)) return false;
+    this.queue({ at, ax, ay, cocked: true, slack: 0 });
+    return true;
+  }
+
+  queue(shot) {
+    this.pending.push({ ...shot, n: this.queued++, at: Math.max(shot.at, this.t), ax: Math.max(-1.6, Math.min(1.6, shot.ax)), ay: Math.max(0.2, Math.min(3, shot.ay)) });
   }
 
   doFire(shot) {
     if (this.t < 0 || this.t >= ROUND_SECONDS || this.over) return;
-    const want = shot.want ?? this.t;
+    const want = shot.cocked ? Math.max(this.t, this.lastWant + COCK_SECONDS) : (shot.want ?? this.t);
     // A room judges by stamps moved by the least lag seen so far, which can fall a little between
     // two corks as the connection settles: that much slack (up to ARRIVAL_SLACK), and no more.
     if (want - this.lastWant < COCK_SECONDS - 0.02 - (shot.slack ?? 0) || this.corksLeft <= 0) return;
