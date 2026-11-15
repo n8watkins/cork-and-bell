@@ -25,15 +25,16 @@ const b = await openBrowser({ win: opt(args, "win", "0") === "1", width: 900, he
 
 /** Runs in the page before its own code: follows each net session and counts what it pictures. */
 function instrument() {
-  const log = (window.__corks = { fired: {}, events: {}, relayed: {}, refused: {}, rebuilds: {}, sessions: 0 });
+  const rounds = (window.__corks = []);
   let hooked = null;
   let proto = null;
+  let log = null; // the round being played: a rematch gets its own
   setInterval(() => {
     const session = window.__cab?.session;
     if (!session || session.kind !== "net" || session === hooked) return;
     hooked = session;
-    log.sessions += 1;
-    for (const k of ["fired", "events", "relayed", "refused", "rebuilds"]) log[k] = {};
+    const mine = (log = { session, fired: {}, events: {}, relayed: {}, refused: {}, rebuilds: {} });
+    rounds.push(mine);
     const sim = Object.values(session.sims)[0];
     if (sim && Object.getPrototypeOf(sim) !== proto) {
       // Corks the page's own stalls would not fire (not cocked, by the page's judgment).
@@ -47,6 +48,7 @@ function instrument() {
     }
     const advance = session.advance.bind(session);
     session.advance = (dt) => {
+      const log = mine;
       for (const e of session.queue) if (e.k === "f") log.relayed[e.seat] = (log.relayed[e.seat] ?? 0) + 1;
       const out = advance(dt);
       for (const e of out) {
@@ -61,7 +63,7 @@ function instrument() {
       const sims = snap.seats.map((s) => [s.seat, session.sims[s.seat], session.sims[s.seat]?.corks]);
       check(snap);
       // A rebuilt stall has a new list of corks in flight (or is a new stall altogether).
-      for (const [seat, sim, corks] of sims) if (session.sims[seat] !== sim || session.sims[seat]?.corks !== corks) log.rebuilds[seat] = (log.rebuilds[seat] ?? 0) + 1;
+      for (const [seat, sim, corks] of sims) if (session.sims[seat] !== sim || session.sims[seat]?.corks !== corks) mine.rebuilds[seat] = (mine.rebuilds[seat] ?? 0) + 1;
     };
   }, 20);
 }
@@ -81,15 +83,15 @@ try {
   await host.waitForFunction(() => window.__cab.party.session?.pin, null, { timeout: 30000 });
   const pin = await host.evaluate(() => window.__cab.party.session.pin);
   const guest = await open("auto=1&quality=low&join=" + pin + "&name=Bo&lag=" + lag);
-  await guest.waitForFunction(() => window.__cab.mode === "battle" && window.__corks.sessions > 0, null, { timeout: 60000 });
+  await guest.waitForFunction(() => window.__cab.mode === "battle" && window.__corks.length > 0, null, { timeout: 60000 });
   console.log("round started; guest frozen", freeze ? freeze + " ms every " + every + " ms" : "never", "| lag", lag, "ms each way");
 
   const t0 = Date.now();
   let freezes = 0;
   let lastFreeze = Date.now();
   for (;;) {
-    const over = await guest.evaluate(() => window.__cab.session?.over).catch(() => false);
-    const hostOver = await host.evaluate(() => window.__cab.session?.over).catch(() => false);
+    const over = await guest.evaluate(() => window.__corks[0].session.over).catch(() => false);
+    const hostOver = await host.evaluate(() => window.__corks[0].session.over).catch(() => false);
     if (over && hostOver) break;
     if (Date.now() - t0 > 150000) throw new Error("the round did not end");
     if (freeze && !over && Date.now() - lastFreeze >= every) {
@@ -101,16 +103,18 @@ try {
       }, freeze);
     } else await new Promise((r) => setTimeout(r, 200));
   }
-  // The round is over. Nothing more is fired; read each page before a rematch replaces the session.
-  await new Promise((r) => setTimeout(r, 300));
+  // The room has said the round is over, and no more corks are fired. A page's picture runs behind
+  // the room (and a page that was frozen, or is slow, further): give it time to draw the last ones.
+  // (A rematch meanwhile is another session, with its own count.)
+  await new Promise((r) => setTimeout(r, 4000));
   const read = (page) =>
     page.evaluate(() => {
       const c = window.__cab;
-      const log = window.__corks;
+      const log = window.__corks[0];
       return {
-        mySeat: c.session.mySeat,
+        mySeat: log.session.mySeat,
         rtt: Math.round(c.party.rtt ?? 0),
-        seats: c.session.result().map((r) => {
+        seats: log.session.result().map((r) => {
           const ids = Object.keys(log.fired[r.seat] ?? {}).map(Number);
           return {
             seat: r.seat,
