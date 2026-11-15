@@ -191,7 +191,8 @@ Where to find Nick:
   Nick's prompt pack for the video, the cork gallery prompt included, is free there; the video's description sends you there for it.
 - [Maker School](https://www.skool.com/makerschool/about), his paid community on Skool.
 
-Nick's prompt pack is not copied into this repository; get it from him.
+The text of his cork gallery prompt is not in this repository.
+It is kept unchanged, with where it came from, in [n8-party-games, under `credits/nick-saraev/`](https://github.com/n8watkins/n8-party-games/tree/main/credits/nick-saraev).
 The MIT License here covers this project's own code and assets; Nick's prompts and the wording taken from them remain his and are not licensed by this repository.
 This project is not affiliated with Nick Saraev or endorsed by him.
 
