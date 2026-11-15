@@ -1,19 +1,25 @@
 // Does every page picture every cork the room counted? A two-player room (two ?auto=1 pages), one
 // full round, optionally with the guest's main thread frozen now and then (a busy phone, a tab
 // that was in the background). Each page counts the corks its own picture of each stall fired
-// (the stall's "fire" events, by cork number), and the end is compared with the room's last word
-// (the result's shots).
+// (the stall's "fire" events, by cork number, with their aim), and the end is compared with the
+// room's word: the result's shots, and the room's snapshots (the corks in the air, by number and
+// aim, and in the last one, sent when the round is over, the corks each stall had left).
 //
 // Run the local server first (npm run dev), then:
 //   node tools/watch-corks.mjs [--freeze=1200] [--every=4000] [--lag=40] [--win=0] [--base=...]
 //     --freeze=<ms>  how long the guest's main thread is frozen each time (0: never)
 //     --every=<ms>   how often
-// Exits 1 when a page pictured fewer or more corks than the room counted.
+// Exits 1 when a page pictured fewer or more corks than the room counted, a cork with another aim
+// than the room's cork of that number, or ended the round with other corks left than the room.
 //
 // The measure, and why not a simpler one: `corksLeft` is no count of corks fired (a dead-centre
 // hit earns the cork back), and a stall's `shots` is overwritten by the room's numbers at the end
 // of the round and at every rebuild. A cork was pictured when the page's stall fired it, so that
-// is what is counted: the distinct cork numbers 0 .. shots-1 among the "fire" events.
+// is what is counted: the distinct cork numbers 0 .. shots-1 among the "fire" events. Numbers
+// alone could match while the corks do not (a page that pictures a cork the room never had, and
+// misses one it had), so each is matched with the room's cork of that number by its aim, for the
+// corks the room's snapshots caught in the air (most of them: they fly longer than the half second
+// between snapshots), and the corks left at the end are compared too.
 import { BASE, openBrowser, opt } from "./browser.mjs";
 
 const args = process.argv.slice(2);
@@ -33,8 +39,19 @@ function instrument() {
     const session = window.__cab?.session;
     if (!session || session.kind !== "net" || session === hooked) return;
     hooked = session;
-    const mine = (log = { session, fired: {}, events: {}, relayed: {}, refused: {}, rebuilds: {} });
+    const mine = (log = { session, fired: {}, events: {}, relayed: {}, refused: {}, rebuilds: {}, room: {} });
     rounds.push(mine);
+    // The room's word on each stall, from every snapshot of this round: the aim of each cork it
+    // had in the air, by number, and the corks it had left.
+    window.__cab.party.on("snapshot", (snap) => {
+      if (snap.startAt !== session.startAt || snap.round !== session.round) return;
+      snap.seats.forEach((s, i) => {
+        const stall = snap.stalls[i];
+        const room = (mine.room[s.seat] ??= { aims: {}, corksLeft: null });
+        for (const c of stall.flying ?? []) room.aims[c.id] = [c.ax, c.ay];
+        room.corksLeft = stall.corks;
+      });
+    });
     const sim = Object.values(session.sims)[0];
     if (sim && Object.getPrototypeOf(sim) !== proto) {
       // Corks the page's own stalls would not fire (not cocked, by the page's judgment).
@@ -53,7 +70,7 @@ function instrument() {
       const out = advance(dt);
       for (const e of out) {
         if (e.k !== "fire") continue;
-        (log.fired[e.seat] ??= {})[e.id] = 1;
+        (log.fired[e.seat] ??= {})[e.id] = [e.ax, e.ay];
         log.events[e.seat] = (log.events[e.seat] ?? 0) + 1;
       }
       return out;
@@ -115,15 +132,22 @@ try {
         mySeat: log.session.mySeat,
         rtt: Math.round(c.party.rtt ?? 0),
         seats: log.session.result().map((r) => {
-          const ids = Object.keys(log.fired[r.seat] ?? {}).map(Number);
+          const fired = log.fired[r.seat] ?? {};
+          const ids = Object.keys(fired).map(Number);
+          const room = log.room[r.seat] ?? { aims: {}, corksLeft: null };
+          const aimed = ids.filter((id) => room.aims[id]);
           return {
             seat: r.seat,
             name: r.name,
             counted: r.shots,
             pictured: ids.filter((id) => id < r.shots).length,
-            missing: Array.from({ length: r.shots }, (_, id) => id).filter((id) => !log.fired[r.seat]?.[id]),
+            missing: Array.from({ length: r.shots }, (_, id) => id).filter((id) => !fired[id]),
             beyond: ids.filter((id) => id >= r.shots).length,
             twice: (log.events[r.seat] ?? 0) - ids.length,
+            aimed: aimed.length,
+            aimWrong: aimed.filter((id) => fired[id][0] !== room.aims[id][0] || fired[id][1] !== room.aims[id][1]),
+            corksLeft: log.session.sims[r.seat]?.corksLeft,
+            roomCorksLeft: room.corksLeft,
             relayed: log.relayed[r.seat] ?? 0,
             refused: log.refused[r.seat] ?? 0,
             rebuilds: log.rebuilds[r.seat] ?? 0,
@@ -136,16 +160,18 @@ try {
     const r = await read(page);
     console.log(name + " page (seat " + r.mySeat + ", round trip " + r.rtt + " ms):");
     for (const s of r.seats.sort((a, c) => a.seat - c.seat)) {
-      const ok = s.pictured === s.counted && s.beyond === 0 && s.twice === 0;
+      const ok = s.pictured === s.counted && s.beyond === 0 && s.twice === 0 && s.aimWrong.length === 0 && s.corksLeft === s.roomCorksLeft;
       if (!ok) failed = true;
       console.log(
         "  " + (s.seat === r.mySeat ? "own    " : "watched") + " stall " + s.seat + " (" + s.name + "): room counted " + s.counted + ", pictured " + s.pictured +
           (s.missing.length ? " (never pictured: cork " + s.missing.join(", ") + ")" : "") + (s.beyond ? ", " + s.beyond + " the room never counted" : "") + (s.twice ? ", " + s.twice + " pictured twice" : "") +
+          "; aims matched " + (s.aimed - s.aimWrong.length) + " of " + s.aimed + (s.aimWrong.length ? " (another aim: cork " + s.aimWrong.join(", ") + ")" : "") +
+          "; corks left " + s.corksLeft + ", room " + s.roomCorksLeft +
           " | relayed " + s.relayed + ", refused by the page " + s.refused + ", rebuilds " + s.rebuilds + (ok ? "" : "   <-- WRONG"),
       );
     }
   }
-  console.log(failed ? "FAILED: a page did not picture exactly the corks the room counted" : "PASSED: every page pictured every cork the room counted");
+  console.log(failed ? "FAILED: a page did not picture exactly the corks the room counted" : "PASSED: every page pictured every cork the room counted, as the room fired it");
 } catch (err) {
   failed = true;
   console.error("FAILED:", err?.message ?? err);
