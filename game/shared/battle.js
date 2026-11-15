@@ -5,18 +5,30 @@
 // Inputs (never results):  {f: [at, ax, ay], q}  fire at round time `at`, aiming at (ax, ay) on the front row's plane;
 //                                             `q` (optional) numbers the page's corks 1, 2, 3 ... in a round
 //                          {pick: seat}       choose which rival your attacks go to (-1: the leader)
-import { BELL_FULL, COCK_SECONDS, JAM_MAX_SECONDS, RICOCHET_TIMES, ROUND_SECONDS, StallSim, TASKS, pendulumBob, predict, resetIndex } from "./sim.js";
+//
+// A page's numbered cork is one cork from end to end: the room carries its `q` on the shot
+// waiting, on the cork, in its "fire" event, in the relay ({k: "f"}) and in snapshots (the corks
+// waiting and in the air, and `firedQ`, every numbered cork the stall fired). It says which
+// numbers it has read (`heard`, the highest, and `gaps`, the lower ones not read yet), and when it
+// will not fire a numbered cork, at the door or when its time comes, it says so: {k: "no", seat, q}.
+// So for every cork it sent, a page can tell from any snapshot whether the room fired it, will
+// still judge it, or never will (game/session.js, NetSession.settle).
+import { ARRIVAL_SLACK, BELL_FULL, COCK_SECONDS, JAM_MAX_SECONDS, RICOCHET_TIMES, ROUND_SECONDS, StallSim, TASKS, pendulumBob, predict, resetIndex } from "./sim.js";
 import { PENDULUMS } from "./layout.js";
 
 export const COUNT_IN = 3;
 /** The furthest ahead of the room's clock a page's cork stamps are believed to be, in seconds. */
 const MAX_AHEAD = 0.6;
 /**
- * The most corks a stall keeps waiting for their time. A player's are fired about half a second
- * apart and wait about SIM_DELAY, so one or two wait; a page sending more is refused, and the
- * corks waiting, which every snapshot carries to every screen, stay few.
+ * A backstop on the corks a stall keeps waiting for their time, far above any honest burst: a
+ * page's corks that were held 8 s on the way (a stalled mobile link) arrive together, about 17 of
+ * them, and wait together. The door's own rule (see input) already bounds what can wait to what
+ * could honestly have been fired.
  */
-const MAX_WAITING = 8;
+const MAX_WAITING = 64;
+/** Numbers lower than the highest read and not read yet (`gaps`) are waited for this long, and this many. */
+const GAP_MS = 3000;
+const MAX_GAPS = 16;
 export const SIM_DELAY = 0.3; // the room simulates this far behind its clock, so inputs arrive before their time
 export const WARNING = 1.5;
 export const MOTHS_SECONDS = 4;
@@ -47,7 +59,7 @@ export function createBattle({ seed, seats, now, round = 1, delay = SIM_DELAY, b
     picks: {},
     /** seat -> the least lag its cork stamps have shown, in seconds of round time (input). */
     lag: {},
-    /** seat -> the number (`q`) of the last cork heard from its page, for that page's rebuilds. */
+    /** seat -> the numbers (`q`) read from its page: {q: the highest, gaps: [[q, when], ...] lower ones not read yet}. */
     heard: {},
     bots: {},
     botSkill,
@@ -66,6 +78,31 @@ export function createBattle({ seed, seats, now, round = 1, delay = SIM_DELAY, b
     state.stalls[s.seat] = sim;
   }
   return state;
+}
+
+/** Gaps waited for longer than GAP_MS are given up: a cork that comes after that is refused. */
+function closeGaps(read, now) {
+  while (read.gaps.length && (read.gaps.length > MAX_GAPS || now - read.gaps[0][1] > GAP_MS)) read.gaps.shift();
+}
+
+/**
+ * Notes that the room has read cork `q` from this seat's page. False when the number was read
+ * before or given up on. A page's corks are read in the order they were sent, on one connection;
+ * one that skips numbers leaves gaps, which a cork still on its way on an older connection fills.
+ */
+function readCork(state, seat, q, now) {
+  const read = (state.heard[seat] ??= { q: 0, gaps: [] });
+  closeGaps(read, now);
+  if (q <= read.q) {
+    const i = read.gaps.findIndex((g) => g[0] === q);
+    if (i < 0) return false;
+    read.gaps.splice(i, 1);
+    return true;
+  }
+  for (let g = Math.max(read.q + 1, q - MAX_GAPS); g < q; g++) read.gaps.push([g, now]);
+  read.q = q;
+  closeGaps(read, now);
+  return true;
 }
 
 /** How many attacks are on their way to, or at work on, this stall. */
@@ -140,13 +177,15 @@ export const game = {
     const sim = state.stalls[seat];
     if (!sim || !data || typeof data !== "object") return;
     if (Array.isArray(data.f) && data.f.length === 3) {
-      // A page numbers its corks (older pages do not). The number only tells the page, when it is
-      // rebuilt from a snapshot, which of its corks the room had heard: nothing is judged by it.
-      const q = Number.isSafeInteger(data.q) ? data.q : undefined;
-      if (q !== undefined) state.heard[seat] = Math.max(state.heard[seat] ?? 0, q);
+      // A page numbers its corks (older pages do not). The number tells the page what became of
+      // each of its corks (see the top of this file); nothing is judged by it. A number read
+      // before, or given up on (a gap waited for too long), is refused: one number, one cork.
+      const q = Number.isSafeInteger(data.q) && data.q > 0 ? data.q : undefined;
+      const no = (why) => q !== undefined && state.out.push({ k: "no", seat, q, t: roundTime(state, now) - state.delay, why });
+      if (q !== undefined && !readCork(state, seat, q, now)) return no("again");
       // A stamp and an aim are numbers, or the cork is refused: what a page sends is relayed to
       // every screen, which must make the same of it as the room.
-      if (!data.f.every(Number.isFinite) || sim.pending.length >= MAX_WAITING) return;
+      if (!data.f.every(Number.isFinite)) return no("aim");
       const tNow = roundTime(state, now);
       const stamp = data.f[0];
       // The client's own timestamp is used when it is believable, so its picture and the room agree.
@@ -164,13 +203,23 @@ export const game = {
       const want = Math.min(tNow, stamp + lag);
       // When the least lag has just fallen, the last cork was judged that much late: allow it.
       const slack = Number.isFinite(before) ? Math.max(0, before - lag) : 0;
-      if (!sim.fire(at, data.f[1], data.f[2], want, slack)) return;
+      // The door refuses a cork the stall would refuse when its time comes: one not cocked by the
+      // stamps of the corks already fired or waiting, with all the slack a cork can be given. So
+      // what waits is no more than could honestly have been fired, however many corks come at once.
+      // (Exact against the corks fired. Against one still waiting it assumes that cork will fire;
+      // were it refused in its turn, a cork refused here might have been counted. An honest page's
+      // corks are at least 0.48 s apart by their stamps, and this asks 0.33.)
+      let last = sim.lastWant;
+      for (const shot of sim.pending) if (shot.want > last) last = shot.want;
+      if (want < last + COCK_SECONDS - 0.02 - ARRIVAL_SLACK) return no("cocking");
+      if (sim.pending.length >= MAX_WAITING) return no("full");
+      sim.fire(at, data.f[1], data.f[2], want, slack, q);
       // Every screen mirrors this stall from what is relayed here, and the stall has not judged the
       // cork yet (it does when the cork's time comes). So a screen is sent all the stall will judge
       // it by, `want` and `slack`, and the cork's number in the stall's line (`n`), which tells a
       // screen that was rebuilt from a snapshot whether the snapshot already had this cork. The
-      // page's own number for it (`q`) goes back too: it tells the page which cork the room has.
-      // The aim is the one the stall will fire (held to the stall), not what the page sent.
+      // page's own number for it (`q`) goes too. The aim is the one the stall will fire (held to
+      // the stall), not what the page sent.
       const shot = sim.pending[sim.pending.length - 1];
       state.out.push({ k: "f", seat, n: shot.n, ...(q !== undefined && { q }), at: shot.at, want: shot.want, slack: shot.slack, ax: shot.ax, ay: shot.ay });
     } else if (Number.isInteger(data.pick)) {
@@ -236,6 +285,8 @@ export const game = {
       landAttacks(state.attacks, sim, t);
       sim.step(t);
       for (const e of sim.events) {
+        // A numbered cork the stall would not fire: its page is told.
+        if (e.k === "no") state.out.push(e);
         if (e.k !== "hit") continue;
         if (state.seats.length < 2) continue;
         // Defence: a dead-centre hit inside the warning sends the attack back.
@@ -285,7 +336,11 @@ export const game = {
       seats: state.seats,
       picks: state.picks,
       ended: state.endAt !== null,
-      stalls: state.seats.map((s) => dumpStall(state.stalls[s.seat], state.heard[s.seat])),
+      stalls: state.seats.map((s) => {
+        const read = state.heard[s.seat];
+        if (read) closeGaps(read, now);
+        return dumpStall(state.stalls[s.seat], read);
+      }),
       attacks: state.attacks.filter((a) => !a.done),
     };
   },
@@ -322,13 +377,14 @@ const r3 = (v) => Math.round(v * 1000) / 1000;
  * it has drifted. What decides which corks fly is sent exactly, not rounded: the stall's time (its
  * steps then fall where the room's do), when the last cork was fired, the corks waiting for their
  * time and the corks in the air. A rebuilt stall goes on to fire the corks the room's will.
- * `heard` is the number of the last cork the room heard from the stall's page (see input), when
- * the page numbers them: the page fires again, on its rebuilt stall, only the corks after it.
+ * `read` is what the room has read of the page's numbered corks (see readCork): `heard` and
+ * `gaps` go with `firedQ` (as ranges), and the corks waiting and in the air carry their `q`.
  */
-export function dumpStall(sim, heard) {
+export function dumpStall(sim, read) {
   return {
     ...sim.summary(),
-    ...(heard !== undefined && { heard }),
+    ...(read && { heard: read.q, gaps: read.gaps.map((g) => g[0]) }),
+    firedQ: toRanges(sim.firedQ),
     t: sim.t,
     lastFire: r3(sim.lastFire),
     lastWant: sim.lastWant,
@@ -390,6 +446,24 @@ export function loadStall(sim, d) {
   sim.corks = (d.flying ?? []).map((c) => ({ ...c, p: c.p.slice(), v: c.v.slice() }));
   sim.pending = (d.pending ?? []).map((shot) => ({ ...shot }));
   sim.queued = d.queued ?? 0;
+  sim.firedQ = fromRanges(d.firedQ ?? []);
   sim.lastReset = resetIndex(d.t);
   return sim;
+}
+
+/** [1, 2, 3, 5, 7, 8] -> [[1, 3], [5, 5], [7, 8]]: a round's numbers run mostly in a line. */
+export function toRanges(list) {
+  const out = [];
+  for (const q of [...list].sort((a, b) => a - b)) {
+    const r = out[out.length - 1];
+    if (r && q === r[1] + 1) r[1] = q;
+    else if (!r || q > r[1]) out.push([q, q]);
+  }
+  return out;
+}
+
+export function fromRanges(ranges) {
+  const out = [];
+  for (const [a, b] of ranges) for (let q = a; q <= b && out.length < 1000; q++) out.push(q);
+  return out;
 }

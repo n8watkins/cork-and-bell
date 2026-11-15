@@ -1,124 +1,10 @@
 // A page's picture of a room: every cork the room counted is pictured, once, on the player's own
 // page and on every page that watches the stall, however late and bunched the room's word comes
-// and however often a stall is rebuilt from a snapshot.
+// and however often a stall is rebuilt from a snapshot. (The room and its pages: test/room.js.)
 import { describe, expect, it } from "vitest";
-import { game, dumpStall, loadStall, COUNT_IN } from "../game/shared/battle.js";
+import { game, dumpStall, loadStall } from "../game/shared/battle.js";
 import { StallSim } from "../game/shared/sim.js";
-import { NetSession } from "../game/session.js";
-
-const wire = (v) => JSON.parse(JSON.stringify(v));
-const SEATS = [
-  { seat: 0, name: "Ada", kind: "human" },
-  { seat: 1, name: "Bo", kind: "human" },
-];
-
-/**
- * A room and its pages, a millisecond at a time. The room ticks and sends as the party kit's
- * does (30 times a second, the events and then every 15th tick a snapshot); each page hears it
- * `down(now)` ms later, draws a frame every 16 ms unless `frozen(now)`, and its inputs take
- * `up(now)` ms to reach the room.
- *
- * A connection can fail three ways. While `dropped(now)` the page has no socket: it hears
- * nothing and `sendInput` returns false, and when it is back the room sends it a full snapshot at
- * once, outside the tick, as the party kit's room does on a connect (with a bot standing in
- * meanwhile when `standIn`). While `deaf(now)` what the room sends the page is lost (a socket
- * dying from the room's side first). While `mute(now)` the page's inputs are taken and lost on
- * the way (a socket dying from the page's side first).
- */
-function makeRoom({ seed = 7, standIn = false, oldRoom = false } = {}) {
-  const room = { now: 0, state: game.create({ seed, seats: SEATS, now: 0, round: 1 }), pages: [], inputs: [], ticks: 0, standing: new Set() };
-  room.t = () => room.now / 1000 - COUNT_IN;
-  room.join = ({ seat = -1, offset = 0, up = () => 20, down = () => 20, frozen = () => false, dropped = () => false, deaf = () => false, mute = () => false, oldPage = false, play = () => {} } = {}) => {
-    const page = { seat, down, frozen, dropped, deaf, play, inbox: [], handlers: {}, fired: {}, lastIn: 0, lastUp: 0, away: false, lost: 0 };
-    page.party = {
-      on: (name, fn) => ((page.handlers[name] ??= []).push(fn), () => {}),
-      now: () => room.now + offset,
-      sendInput: (d) => {
-        if (page.dropped(room.now)) return false;
-        page.lastUp = Math.max(page.lastUp, room.now + up(room.now));
-        // A page from before corks were numbered sends none.
-        const sent = wire(d);
-        if (oldPage) delete sent.q;
-        if (mute(room.now)) page.lost += 1;
-        else room.inputs.push({ at: page.lastUp, sentAt: room.now, seat, d: sent, page });
-        return true;
-      },
-    };
-    page.session = new NetSession(page.party, wire(game.snapshot(room.state, room.now)), seat);
-    room.pages.push(page);
-    return page;
-  };
-  /** As the room sends it to one page. */
-  room.sendTo = (page, name, ...data) => {
-    if (page.dropped(room.now) || page.deaf(room.now)) return;
-    page.lastIn = Math.max(page.lastIn, room.now + page.down(room.now));
-    const sent = wire(data);
-    if (oldRoom) {
-      // A room from before corks were numbered relays no number and keeps none.
-      if (name === "events") for (const e of sent[0]) delete e.q;
-      if (name === "snapshot") for (const s of sent[0].stalls) delete s.heard;
-    }
-    page.inbox.push({ at: page.lastIn, name, data: sent });
-  };
-  /** As the room sends it: to every page, in order. */
-  room.send = (name, ...data) => {
-    for (const page of room.pages) room.sendTo(page, name, ...data);
-  };
-  room.run = (until) => {
-    while (room.now < until) {
-      room.now += 1;
-      room.inputs = room.inputs.filter((i) => {
-        if (i.at > room.now) return true;
-        // What was on its way when the connection dropped is lost with it.
-        if (i.page.droppedSince > i.sentAt) i.page.lost += 1;
-        else game.input(room.state, i.seat, i.d, room.now);
-        return false;
-      });
-      for (const page of room.pages) {
-        const away = page.dropped(room.now);
-        if (away && !page.away) {
-          page.droppedSince = room.now;
-          if (page.seat >= 0 && standIn) room.standing.add(page.seat);
-        }
-        if (!away && page.away) {
-          room.standing.delete(page.seat);
-          for (const fn of page.handlers.status ?? []) fn("open");
-          room.sendTo(page, "snapshot", game.snapshot(room.state, room.now), room.now, true);
-        }
-        page.away = away;
-      }
-      if (room.now % 33 === 0) {
-        room.ticks += 1;
-        for (const seat of room.standing) for (const d of game.bot(room.state, seat, room.now)) game.input(room.state, seat, d, room.now);
-        const events = game.tick(room.state, room.now);
-        if (events.length) room.send("events", events);
-        if (room.ticks % 15 === 0) room.send("snapshot", game.snapshot(room.state, room.now), room.now, false);
-      }
-      for (const page of room.pages) {
-        if (page.frozen(room.now)) continue;
-        while (page.inbox.length && page.inbox[0].at <= room.now) {
-          const msg = page.inbox.shift();
-          for (const fn of page.handlers[msg.name] ?? []) fn(...msg.data);
-        }
-        if (room.now % 16 !== 0) continue;
-        page.play(page, room);
-        for (const e of page.session.advance(0.016)) if (e.k === "fire") (page.fired[e.seat] ??= []).push(e.id);
-      }
-    }
-  };
-  return room;
-}
-
-/** The cork numbers 0 .. n-1, each once: what a page that pictured every cork of n has seen. */
-const each = (n) => Array.from({ length: n }, (_, i) => i);
-/**
- * A player who fires as fast as the page lets them, at one spot over the top of the stall. (Not
- * in the first half second: a page whose clock is ahead of the room's can fire before the room's
- * bell, and the room does not count that cork. That is the room's to decide, and not tested here.)
- */
-const hammer = (page, room) => room.t() > 0.5 && page.session.fire(0, 2.6);
-/** A player a little slower and uneven, so the corks fall anywhere between the room's snapshots. */
-const ragged = (page, room) => (room.now * 7919) % 100 < 25 && hammer(page, room);
+import { each, hammer, makeRoom, problems, ragged, wire } from "./room.js";
 
 describe("a watcher's picture of a stall", () => {
   it("fires every cork the room fired when the room's word comes late and bunched", () => {
@@ -337,34 +223,22 @@ describe("a player's own picture of their stall", () => {
   });
 });
 
+/** Every page's picture of every stall is the room's (test/room.js, problems). */
+const expectExact = (room) => {
+  for (const page of room.pages) expect(problems(page, room)).toEqual([]);
+};
+/** A page that draws its stall wrong now and then, so the room's snapshots rebuild it. */
+const drifting = (every, play) => (page, room) => {
+  play(page, room);
+  if (room.now % every === 0 && room.t() > 0.5) page.session.sims[page.seat].score += 1;
+};
 /**
- * A page's picture of a stall against the room's: every cork pictured once, and the same corks
- * left. A cork of the page's own that the connection took and lost on the way flew on the page
- * when it was fired, and the room never counted it: the page pictures one more for each of those,
- * and the room's next cork, which has the lost one's number, is pictured as well.
+ * The page fires the moment its own clock says the round has begun (aimed off to the left, so the
+ * cork can be told from the others), then as fast as it can from 2 s.
  */
-function expectTheRooms(page, room, seat = 0) {
-  const theirs = room.state.stalls[seat];
-  const mine = page.session.sims[seat];
-  const fired = page.fired[seat] ?? [];
-  const lost = seat === page.seat ? page.lost : 0;
-  if (lost === 0) expect(fired).toEqual(each(theirs.shots));
-  else {
-    expect([...new Set(fired)].sort((a, b) => a - b)).toEqual(each(theirs.shots));
-    expect(fired.length).toBe(theirs.shots + lost);
-  }
-  expect({ shots: mine.shots, corksLeft: mine.corksLeft }).toEqual({ shots: theirs.shots, corksLeft: theirs.corksLeft });
-}
-
-/** Sends the page the whole room again at `at`, as the room does when its socket comes back. */
-const handBack = (at, play) => {
-  let done = false;
-  return (page, room) => {
-    play(page, room);
-    if (done || room.now < at) return;
-    done = true;
-    room.sendTo(page, "snapshot", game.snapshot(room.state, room.now), room.now, true);
-  };
+const atTheBell = (page, room) => {
+  if (!page.firstGone && page.session.time() >= 0) page.firstGone = page.session.fire(-1, 2.6);
+  else if (room.t() > 2) hammer(page, room);
 };
 
 describe("a player's own picture after the connection fails", () => {
@@ -377,13 +251,15 @@ describe("a player's own picture after the connection fails", () => {
       [6007, 400],
       [6019, 700],
     ]) {
-      const room = makeRoom();
       // The room heard the corks, but its word of them never came: the snapshot when the page is
       // back already has them, and they must not fly twice on the page.
-      const me = room.join({ seat: 0, up: () => 40, down: () => 40, deaf: (now) => now >= from && now < from + ms, play: handBack(from + ms, hammer) });
-      room.run(END);
-      expect(room.state.stalls[0].corksLeft).toBe(0);
-      expectTheRooms(me, room);
+      for (const handshake of ["connect", "hello"]) {
+        const room = makeRoom({ handshake });
+        room.join({ seat: 0, up: () => 40, down: () => 40, deaf: (now) => now >= from && now < from + ms, play: hammer });
+        room.run(END);
+        expect(room.state.stalls[0].corksLeft).toBe(0);
+        expectExact(room);
+      }
     }
   });
 
@@ -391,9 +267,9 @@ describe("a player's own picture after the connection fails", () => {
     for (const standIn of [false, true]) {
       for (const from of [5000, 5011, 5023]) {
         const room = makeRoom({ standIn });
-        const me = room.join({ seat: 0, up: () => 40, down: () => 40, dropped: (now) => now >= from && now < from + 700, play: hammer });
+        room.join({ seat: 0, up: () => 40, down: () => 40, dropped: (now) => now >= from && now < from + 700, play: hammer });
         room.run(END);
-        expectTheRooms(me, room);
+        expectExact(room);
       }
     }
   });
@@ -401,26 +277,130 @@ describe("a player's own picture after the connection fails", () => {
   it("tells its corks apart by number, also two at one aim when the first was lost on the way", () => {
     const room = makeRoom();
     // One cork is taken by a dying socket and never reaches the room; the next, at the same aim, does.
-    const me = room.join({ seat: 0, up: () => 40, down: () => 40, mute: (now) => now >= 6000 && now < 6500, play: handBack(7300, hammer) });
+    const me = room.join({ seat: 0, up: () => 40, down: () => 40, mute: (now) => now >= 6000 && now < 6500, play: hammer });
     room.run(END);
-    // Back in step with the room, the page fires the cork that was lost again later.
+    // The page takes the lost cork back as soon as the room's word passes it, and fires it again later.
+    expectExact(room);
+    expect(me.lost).toBe(1);
+    expect(me.takenBack.size).toBe(1);
     expect(room.state.stalls[0].shots).toBe(70);
-    expectTheRooms(me, room);
   });
 
-  it("keeps working with a room or a page from before corks were numbered", () => {
-    for (const [oldRoom, oldPage] of [
-      [true, false],
-      [false, true],
-    ]) {
-      const room = makeRoom({ oldRoom });
-      const me = room.join({ seat: 0, up: () => 40, down: () => 40, oldPage, play: handBack(9000, ragged) });
-      const watcher = room.join({ down: () => 60, play: handBack(9000, () => {}) });
-      room.run(18000);
+  it("keeps working in a room from before corks were numbered", () => {
+    // Such a room relays no numbers, says nothing of refusals and keeps none in its snapshots: the
+    // page falls back to telling its corks apart by their number in the stall and their aim.
+    const room = makeRoom({ oldRoom: true });
+    const me = room.join({ seat: 0, up: () => 40, down: () => 40, play: drifting(1700, ragged) });
+    const watcher = room.join({ down: () => 60 });
+    room.run(9000);
+    for (const page of [me, watcher]) room.handBack(page);
+    room.run(18000);
+    me.play = () => {};
+    room.run(21000);
+    expectExact(room);
+    expect(me.session.numbered).toBe(false);
+  });
+
+  it("keeps a room working for a page from before corks were numbered", () => {
+    // Its inputs carry no `q`: the room judges and relays them as it always did, keeps no numbers
+    // for the seat and refuses nothing more. (The old page's own code is not run here: what is
+    // checked is the room, and the newer pages watching that stall.)
+    const room = makeRoom();
+    const seen = [];
+    room.join({ seat: 0, up: () => 40, down: () => 40, oldPage: true, play: ragged });
+    const watcher = room.join({ down: () => 60, play: (page, r) => r.now === 9000 && r.handBack(page) });
+    const send = room.send;
+    room.send = (name, ...data) => (name === "events" && seen.push(...data[0]), send(name, ...data));
+    room.run(18000);
+    room.pages[0].play = () => {};
+    room.run(21000);
+    expect(seen.filter((e) => e.k === "f" && e.seat === 0).length).toBe(room.state.stalls[0].queued);
+    expect(seen.some((e) => e.q !== undefined || e.k === "no")).toBe(false);
+    expect(game.snapshot(room.state, room.now).stalls[0].heard).toBeUndefined();
+    expect(room.state.stalls[0].shots).toBeGreaterThanOrEqual(20);
+    expect(problems(watcher, room)).toEqual([]);
+  });
+});
+
+describe("a player's own cork the room never fires", () => {
+  it("is taken back at once when it went before the room's bell, and the room's next corks are all shown", () => {
+    // Second review, finding 1: a page whose clock is ahead fires at its own t of 0; the room
+    // refuses that cork when its time comes. It stayed pictured and counted on the page, and after
+    // the next rebuild the room's next real cork had a number the page had used, and was hidden.
+    for (const offset of [150, 300]) {
+      const room = makeRoom();
+      const me = room.join({ seat: 0, offset, up: () => 30, down: () => 30, play: drifting(2400, atTheBell) });
+      room.run(16000);
       me.play = () => {};
-      room.run(21000);
-      expectTheRooms(me, room);
-      expectTheRooms(watcher, room);
+      room.run(19000);
+      expectExact(room);
+      expect(me.takenBack).toEqual(new Set(["q1"]));
+      expect(room.fires[0][0].q).toBe(2);
+    }
+  });
+
+  it("is taken back when the door refuses it, also when the room's word of the refusal is lost", () => {
+    // Second review, finding 3: a cork refused at the door was dropped from the page's books
+    // without its count being taken back. The page here lets a second cork go at once (its lever
+    // forced), which the room's door refuses as not cocked.
+    for (const deaf of [false, true]) {
+      const room = makeRoom();
+      const me = room.join({
+        seat: 0,
+        up: () => 30,
+        down: () => 30,
+        // The refusal comes 60 ms later: with `deaf`, the room's word for those 200 ms is lost, and
+        // the page is handed the whole room when it hears again.
+        deaf: (now) => deaf && now >= 6000 && now < 6200,
+        play: (page, r) => {
+          if (r.now === 5984) {
+            page.session.fire(0, 2.6);
+            page.session.sims[0].lastFire = -10;
+            page.session.lastStamp = -10;
+            page.session.fire(0.4, 2.6);
+          } else if (r.now > 7000) hammer(page, r);
+        },
+      });
+      room.run(42000);
+      expectExact(room);
+      expect(me.takenBack.size).toBe(1);
+    }
+  });
+
+  it("is not refused at the door when an honest page's corks come all at once after its link stalled", () => {
+    // Second review, finding 2: a cap of 8 corks waiting refused corks the room would have counted,
+    // after an uplink stall of about 4.5 s or more. Every cork an honest page sends is counted.
+    for (const stall of [2000, 4500, 6000, 8000]) {
+      const room = makeRoom();
+      const from = 6000;
+      const me = room.join({ seat: 0, up: (now) => (now >= from && now < from + stall ? from + stall - now + 30 : 30), down: () => 30, play: drifting(1900, hammer) });
+      room.run(42000);
+      expect(room.state.stalls[0].shots).toBe(me.session.q);
+      expectExact(room);
+      expect(me.takenBack.size).toBe(0);
+    }
+  });
+
+  it("is still counted when it was sent on the old connection and read after the new one's snapshot", () => {
+    // Second review, finding 4: such a cork was let go on the page (it was sent before the new
+    // connection opened) and counted by the room: one cork pictured twice, one missing.
+    for (const handshake of ["connect", "hello"]) {
+      const room = makeRoom({ handshake });
+      const me = room.join({ seat: 0, up: () => 30, down: () => 30, play: hammer });
+      room.run(6000);
+      me.play = () => {};
+      room.run(6600);
+      // A cork on a slow path (a half-open old socket), then the page is handed the whole room.
+      const send = me.party.sendInput;
+      me.party.sendInput = (d) => (room.inputs.push({ at: room.now + 400, sentAt: room.now, seat: 0, d: wire(d), page: me }), true);
+      expect(me.session.fire(0, 2.6)).toBe(true);
+      me.party.sendInput = send;
+      room.run(6620);
+      room.handBack(me);
+      me.play = hammer;
+      room.run(42000);
+      expectExact(room);
+      expect(me.takenBack.size).toBe(0);
     }
   });
 });
@@ -429,7 +409,7 @@ describe("a stall rebuilt from a snapshot", () => {
   it("goes on exactly as the room's does: corks in the air, corks waiting, and the count", () => {
     const sim = new StallSim(11, 0);
     sim.step(1);
-    for (let i = 0; i < 6; i++) sim.fire(1.2 + i * 0.5, -0.6 + i * 0.25, 1.2 + (i % 3) * 0.3, 1.2 + i * 0.5);
+    for (let i = 0; i < 6; i++) sim.fire(1.2 + i * 0.5, -0.6 + i * 0.25, 1.2 + (i % 3) * 0.3, 1.2 + i * 0.5, 0, i + 1);
     sim.step(2.9);
     expect(sim.corks.length).toBeGreaterThan(0);
     expect(sim.pending.length).toBeGreaterThan(0);
@@ -439,7 +419,8 @@ describe("a stall rebuilt from a snapshot", () => {
     copy.step(9);
     expect(copy.shots).toBe(6);
     expect(copy.events.filter((e) => e.k === "fire").map((e) => e.id)).toEqual(sim.events.filter((e) => e.k === "fire").map((e) => e.id));
-    expect([copy.shots, copy.hits, copy.score, copy.corksLeft, copy.queued]).toEqual([sim.shots, sim.hits, sim.score, sim.corksLeft, sim.queued]);
+    expect([copy.shots, copy.hits, copy.score, copy.corksLeft, copy.queued, copy.firedQ]).toEqual([sim.shots, sim.hits, sim.score, sim.corksLeft, sim.queued, sim.firedQ]);
+    expect(copy.firedQ).toEqual([1, 2, 3, 4, 5, 6]);
     expect(copy.rested.length).toBe(sim.rested.length);
   });
 

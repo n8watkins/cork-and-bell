@@ -224,6 +224,8 @@ export class StallSim {
     this.pending = []; // fire inputs waiting for their time
     /** How many corks have been queued so far (fired or not): each one's number is its place in that line. */
     this.queued = 0;
+    /** The page's numbers (`q`) of the corks this stall has fired, in order (corks without one are not in it). */
+    this.firedQ = [];
     this.events = [];
     this.over = false;
   }
@@ -249,10 +251,13 @@ export class StallSim {
    * mirrors a room's stall passes on the room's own `want` and `slack` for each cork, and must
    * come to the room's verdict however late and bunched the corks reach it. Without a `want` the
    * cork is judged by the stall's own time when it fires.
+   *
+   * `q` is the page's own number for the cork, when its page numbers them: it goes with the cork
+   * (on the shot, the cork, its "fire" event, and `firedQ`) and tells the page which cork it is.
    */
-  fire(at, ax, ay, want, slack = 0) {
+  fire(at, ax, ay, want, slack = 0, q) {
     if (!Number.isFinite(at) || !Number.isFinite(ax) || !Number.isFinite(ay)) return false;
-    this.queue({ at, ax, ay, want: Number.isFinite(want) ? want : undefined, slack: Math.min(ARRIVAL_SLACK, Math.max(0, slack || 0)) });
+    this.queue({ at, ax, ay, want: Number.isFinite(want) ? want : undefined, slack: Math.min(ARRIVAL_SLACK, Math.max(0, slack || 0)), q });
     return true;
   }
 
@@ -261,22 +266,29 @@ export class StallSim {
    * when its own lever is cocked (NetSession.canFire) and pictures it at once. The room judges the
    * same cork for itself. The stall still fires it only inside the round and while a cork is left.
    */
-  fireCocked(at, ax, ay) {
+  fireCocked(at, ax, ay, q) {
     if (!Number.isFinite(at) || !Number.isFinite(ax) || !Number.isFinite(ay)) return false;
-    this.queue({ at, ax, ay, cocked: true, slack: 0 });
+    this.queue({ at, ax, ay, cocked: true, slack: 0, q });
     return true;
   }
 
   queue(shot) {
-    this.pending.push({ ...shot, n: this.queued++, at: Math.max(shot.at, this.t), ax: Math.max(-1.6, Math.min(1.6, shot.ax)), ay: Math.max(0.2, Math.min(3, shot.ay)) });
+    const { q, ...rest } = shot;
+    this.pending.push({ ...rest, ...(q !== undefined && { q }), n: this.queued++, at: Math.max(shot.at, this.t), ax: Math.max(-1.6, Math.min(1.6, shot.ax)), ay: Math.max(0.2, Math.min(3, shot.ay)) });
+  }
+
+  /** A numbered cork this stall will not fire: a room tells the cork's page (battle.js tick). */
+  refuse(shot, why) {
+    if (shot.q !== undefined) this.events.push({ k: "no", seat: this.seat, q: shot.q, t: this.t, why });
   }
 
   doFire(shot) {
-    if (this.t < 0 || this.t >= ROUND_SECONDS || this.over) return;
+    if (this.t < 0 || this.t >= ROUND_SECONDS || this.over) return this.refuse(shot, this.t < 0 ? "early" : "late");
     const want = shot.cocked ? Math.max(this.t, this.lastWant + COCK_SECONDS) : (shot.want ?? this.t);
     // A room judges by stamps moved by the least lag seen so far, which can fall a little between
     // two corks as the connection settles: that much slack (up to ARRIVAL_SLACK), and no more.
-    if (want - this.lastWant < COCK_SECONDS - 0.02 - (shot.slack ?? 0) || this.corksLeft <= 0) return;
+    if (want - this.lastWant < COCK_SECONDS - 0.02 - (shot.slack ?? 0)) return this.refuse(shot, "cocking");
+    if (this.corksLeft <= 0) return this.refuse(shot, "empty");
     this.lastWant = want;
     this.lastFire = this.t;
     this.corksLeft -= 1;
@@ -285,8 +297,30 @@ export class StallSim {
     // Each cork has its own small drift and spin: it wanders more the farther it flies.
     const drift = (hash(this.seed, n * 3 + 1) - 0.5) * 1.5;
     const lift = (hash(this.seed, n * 3 + 2) - 0.5) * 0.7;
-    this.corks.push({ id: n, p, v, drift, lift, bounces: 0, struck: 0, born: this.t, age: 0, spin: hash(this.seed, n * 3 + 3), ax: shot.ax, ay: shot.ay });
-    this.events.push({ k: "fire", seat: this.seat, id: n, t: this.t, ax: shot.ax, ay: shot.ay });
+    const q = shot.q !== undefined ? { q: shot.q } : {};
+    if (shot.q !== undefined) this.firedQ.push(shot.q);
+    this.corks.push({ id: n, p, v, drift, lift, bounces: 0, struck: 0, born: this.t, age: 0, spin: hash(this.seed, n * 3 + 3), ax: shot.ax, ay: shot.ay, ...q });
+    this.events.push({ k: "fire", seat: this.seat, id: n, n: shot.n, t: this.t, ax: shot.ax, ay: shot.ay, ...q });
+  }
+
+  /**
+   * Takes back a cork this stall fired that never was (a page's picture of a cork its room refused,
+   * or never heard): it is not counted, the cork is given back, and if it is still in the air it
+   * flies on as a ghost that touches nothing and leaves nothing behind. True when it was here.
+   */
+  unfire(q) {
+    const i = this.pending.findIndex((shot) => shot.q === q);
+    if (i >= 0) {
+      this.pending.splice(i, 1);
+      return true;
+    }
+    const k = this.firedQ.indexOf(q);
+    if (k < 0) return false;
+    this.firedQ.splice(k, 1);
+    this.shots -= 1;
+    this.corksLeft += 1;
+    for (const c of this.corks) if (c.q === q) c.ghost = true;
+    return true;
   }
 
   /** Advances to round time `to`, in fixed steps. Events gather in this.events. */
@@ -344,9 +378,10 @@ export class StallSim {
     c.age += DT;
 
     // Targets: thin plates in a plane. A cork crossing the plane inside the shape strikes it.
-    if (v[2] !== 0) this.strikeTargets(c, x0, y0, z0);
+    // (A ghost, a cork taken back, touches nothing: see unfire.)
+    if (v[2] !== 0 && !c.ghost) this.strikeTargets(c, x0, y0, z0);
     // The rest of the stall: lamps, the prizes on the shelf, the drive on the left wall.
-    this.strikeProps(c, x0, y0, z0);
+    if (!c.ghost) this.strikeProps(c, x0, y0, z0);
 
     // Side walls and the back board, as tall as they are built and no taller: a cork aimed over
     // the top flies on into the dusk. (Only a cork still inside the stall can meet them.)
@@ -397,6 +432,7 @@ export class StallSim {
   }
 
   prop(c, what, i, extra) {
+    if (c.ghost) return;
     const e = { k: "prop", seat: this.seat, id: c.id, t: this.t, what, i, x: c.p[0], y: c.p[1], z: c.p[2], ...extra };
     this.events.push(e);
     this.checkTasks(e);
@@ -542,6 +578,7 @@ export class StallSim {
   }
 
   rest(c, lost = false) {
+    if (c.ghost) return false;
     if (!c.struck) {
       // A clean miss ends the run of hits.
       if (this.streak > 0) this.events.push({ k: "streak", seat: this.seat, t: this.t, streak: 0 });
