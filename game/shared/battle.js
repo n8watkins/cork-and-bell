@@ -10,6 +10,12 @@ import { PENDULUMS } from "./layout.js";
 export const COUNT_IN = 3;
 /** The furthest ahead of the room's clock a page's cork stamps are believed to be, in seconds. */
 const MAX_AHEAD = 0.6;
+/**
+ * The most corks a stall keeps waiting for their time. A player's are fired about half a second
+ * apart and wait about SIM_DELAY, so one or two wait; a page sending more is refused, and the
+ * corks waiting, which every snapshot carries to every screen, stay few.
+ */
+const MAX_WAITING = 8;
 export const SIM_DELAY = 0.3; // the room simulates this far behind its clock, so inputs arrive before their time
 export const WARNING = 1.5;
 export const MOTHS_SECONDS = 4;
@@ -139,7 +145,7 @@ export const game = {
       if (q !== undefined) state.heard[seat] = Math.max(state.heard[seat] ?? 0, q);
       // A stamp and an aim are numbers, or the cork is refused: what a page sends is relayed to
       // every screen, which must make the same of it as the room.
-      if (!data.f.every(Number.isFinite)) return;
+      if (!data.f.every(Number.isFinite) || sim.pending.length >= MAX_WAITING) return;
       const tNow = roundTime(state, now);
       const stamp = data.f[0];
       // The client's own timestamp is used when it is believable, so its picture and the room agree.

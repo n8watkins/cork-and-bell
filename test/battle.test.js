@@ -495,6 +495,24 @@ describe("a player's corks in the room", () => {
     expect(state.stalls[0].shots).toBeLessThanOrEqual(2);
   });
 
+  it("keeps only a few corks waiting, so a page cannot swell the snapshots every screen is sent", () => {
+    const seats = Array.from({ length: 4 }, (_, i) => ({ seat: i, name: `P${i}`, kind: "human" }));
+    const state = game.create({ seed: 3, seats, now: 0, round: 1 });
+    let now = 0;
+    for (let i = 0; i < 300; i++) game.tick(state, (now += 33));
+    const quiet = JSON.stringify(game.snapshot(state, now)).length;
+    // Two thousand corks in a third of a second, every one of them stamped as cocked.
+    const relayed = [];
+    for (let k = 0; k < 10; k++) {
+      for (let i = 0; i < 200; i++) game.input(state, 0, { f: [roundTime(state, now) + 0.08, 0, 2.6] }, now);
+      relayed.push(...game.tick(state, (now += 33)).filter((e) => e.k === "f"));
+    }
+    expect(state.stalls[0].pending.length).toBeLessThanOrEqual(8);
+    // A cork refused at the door is not relayed either.
+    expect(relayed.length).toBeLessThanOrEqual(8 + 10);
+    expect(JSON.stringify(game.snapshot(state, now)).length).toBeLessThan(quiet + 2000);
+  });
+
   it("does not let a page fire faster by stamping its corks further apart than it sends them", () => {
     const seats = [{ seat: 0, name: "Ada", kind: "human" }];
     const state = game.create({ seed: 5, seats, now: 0, round: 1 });
