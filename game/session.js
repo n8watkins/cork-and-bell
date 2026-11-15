@@ -105,10 +105,10 @@ export class NetSession {
     this.opened = 0;
     /** The stamp of this page's last cork. The room judges whether a cork was cocked by these. */
     this.lastStamp = -10;
-    /** seat -> how far this screen had pictured the stall (round time) when the stall was last rebuilt. */
-    this.shown = {};
     /** seat -> the number after the last cork this screen pictured leaving that stall. */
     this.pictured = {};
+    /** This page's own corks that flew here and that the room never heard, since its stall was last rebuilt. */
+    this.lost = 0;
     /** "fire" events for the corks a rebuild brought already in the air, which this screen never saw leave. */
     this.arrived = [];
     this.adopt(snapshot, true);
@@ -135,10 +135,12 @@ export class NetSession {
       // The room has our cork. It hears them in the order they were sent, so one sent before this
       // and never relayed was not taken at all. A room that numbers nothing (older code) is
       // matched by the aim, which cannot tell two corks at one aim apart.
-      if (Number.isInteger(e.q)) this.sent = this.sent.filter((s) => s.q > e.q);
-      else {
+      if (Number.isInteger(e.q)) {
+        this.lost += this.sent.filter((s) => s.q < e.q).length;
+        this.sent = this.sent.filter((s) => s.q > e.q);
+      } else {
         const i = this.sent.findIndex((s) => s.f[1] === e.ax && s.f[2] === e.ay);
-        if (i >= 0) this.sent.splice(0, i + 1);
+        if (i >= 0) this.lost += this.sent.splice(0, i + 1).length - 1;
       }
     }
     this.queue.push(...events);
@@ -158,14 +160,14 @@ export class NetSession {
         this.q = 0;
         this.opened = 0;
         this.lastStamp = -10;
-        this.shown = {};
         this.pictured = {};
+        this.lost = 0;
         this.arrived = [];
       }
       this.sims = {};
       snap.seats.forEach((s, i) => {
         const sim = new StallSim(snap.seed, s.seat);
-        if (snap.t > -COUNT_IN + 0.2) this.load(sim, snap.stalls[i], before[s.seat]?.t, fresh);
+        if (snap.t > -COUNT_IN + 0.2) this.load(sim, snap.stalls[i], !!before[s.seat], fresh);
         else sim.t = -COUNT_IN - 1;
         this.sims[s.seat] = sim;
       });
@@ -177,10 +179,15 @@ export class NetSession {
 
   /**
    * Makes a stall the room's, from a snapshot: its numbers, the corks in the air and the corks
-   * waiting for their time. `shown` is how far this screen had pictured the stall, if it had;
-   * `fresh`, that the snapshot is the one a connection opens with.
+   * waiting for their time. `known`: this screen had pictured the stall before; `fresh`: the
+   * snapshot is the one a connection opens with.
+   *
+   * The rebuilt stall plays again the moments from the snapshot's time to this screen's, and fires
+   * again the corks of them: the ones this screen has pictured are not shown again (advance), told
+   * apart by their number (`pictured`), not by their time, since a cork the room's word of which
+   * came late (or was read and not yet acted on) is pictured late, or by the rebuilt stall.
    */
-  load(sim, theirs, shown, fresh) {
+  load(sim, theirs, known, fresh) {
     loadStall(sim, theirs);
     if (sim.seat === this.mySeat) {
       // Our own corks the room had not heard when it took the snapshot are not in it, and the
@@ -194,20 +201,23 @@ export class NetSession {
       }
       // The corks sent on a connection that has closed and not heard by now never will be. (So is
       // one the room has still not heard two seconds on, where the page is not told of connections.)
-      if (fresh) this.sent = this.sent.filter((s) => s.q > this.opened);
       const t = this.time();
-      this.sent = this.sent.filter((s) => s.f[0] > t - 2);
+      const kept = this.sent.filter((s) => (!fresh || s.q > this.opened) && s.f[0] > t - 2);
+      this.lost += this.sent.length - kept.length;
+      this.sent = kept;
       for (const s of this.sent) sim.fireCocked(...s.f);
+      // The corks that flew here and never reached the room are not in the room's count: the
+      // room's next corks have their numbers, and are new to this screen.
+      if (known) this.pictured[sim.seat] = Math.max(0, (this.pictured[sim.seat] ?? 0) - this.lost);
+      this.lost = 0;
     }
-    if (shown === undefined) {
+    if (!known) {
       // A screen that has just come to the round: what flew before it came is not news.
       this.pictured[sim.seat] = sim.shots;
       return;
     }
-    this.shown[sim.seat] = shown;
     // The snapshot's corks in the air that this screen never saw leave (the room's word of them
-    // was still on its way, or still unread): it is told of them now. By the cork's number, not
-    // its time: word that comes late is of a cork fired before the moment this screen had reached.
+    // was still on its way, or still unread): it is told of them now.
     for (const c of sim.corks) {
       if (c.id < (this.pictured[sim.seat] ?? 0)) continue;
       this.pictured[sim.seat] = c.id + 1;
@@ -288,11 +298,11 @@ export class NetSession {
       landAttacks(this.attacks, sim, t);
       sim.step(t);
       for (const e of sim.events) {
-        // A rebuilt stall of our own plays again the moments since the room's snapshot: the corks
-        // it fires again are corks this screen has pictured.
+        // A rebuilt stall plays again the moments since the room's snapshot (see load): a cork it
+        // fires again that this screen has pictured is not shown twice.
         if (e.k === "fire") {
-          if (e.t <= (this.shown[s.seat] ?? -Infinity)) continue;
-          this.pictured[s.seat] = Math.max(this.pictured[s.seat] ?? 0, e.id + 1);
+          if (e.id < (this.pictured[s.seat] ?? 0)) continue;
+          this.pictured[s.seat] = e.id + 1;
         }
         // A dead-centre hit inside a warning is a block: show it now, the room will confirm it.
         if (e.k === "hit" && e.perfect && s.seat === this.mySeat) {
@@ -331,7 +341,7 @@ export class NetSession {
       const wrong = mineScore !== theirs.score;
       this.drift[s.seat] = wrong ? (this.drift[s.seat] ?? 0) + 1 : 0;
       if (this.drift[s.seat] >= 4) {
-        this.load(sim, theirs, sim.t);
+        this.load(sim, theirs, true, false);
         this.drift[s.seat] = 0;
         this.rebuilt = true;
       }

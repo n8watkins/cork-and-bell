@@ -212,6 +212,30 @@ describe("a watcher's picture of a stall", () => {
     expect(seen).toEqual([0]);
   });
 
+  it("pictures a cork whose word was read but not yet acted on, when a rebuild from an older snapshot came first", () => {
+    const room = makeRoom();
+    const watcher = room.join();
+    room.run(5000);
+    const seen = [];
+    const frame = () => {
+      room.now += 16;
+      seen.push(...watcher.session.advance(0.016).filter((e) => e.k === "fire").map((e) => e.id));
+    };
+    // The room hears a cork and takes a snapshot while the cork waits for its time there.
+    game.input(room.state, 0, { f: [room.t(), 0, 2.6] }, room.now);
+    const snap = wire(game.snapshot(room.state, room.now));
+    const events = wire(game.tick(room.state, (room.now += 1)));
+    // Both are slow to come: the watcher's picture goes past the cork's time meanwhile.
+    for (let i = 0; i < 35; i++) frame();
+    expect(seen).toEqual([]);
+    // The word is read, and before the next frame acts on it the snapshot rebuilds the stall: the
+    // cork is waiting in it, for a time this screen's picture had passed.
+    for (const fn of watcher.handlers.events) fn(events);
+    for (const fn of watcher.handlers.snapshot) fn(snap, room.now, true);
+    for (let i = 0; i < 10; i++) frame();
+    expect(seen).toEqual([0]);
+  });
+
   it("fires each cork once after a frozen page comes back and is handed the whole room again", () => {
     const room = makeRoom();
     room.join({ seat: 0, play: hammer });
@@ -276,8 +300,8 @@ describe("a player's own picture of their stall", () => {
 /**
  * A page's picture of a stall against the room's: every cork pictured once, and the same corks
  * left. A cork of the page's own that the connection took and lost on the way flew on the page
- * when it was fired, and the room never counted it: the page pictures up to one more for each of
- * those. (Not always one more: a cork a stand-in bot fired meanwhile can have the lost one's number.)
+ * when it was fired, and the room never counted it: the page pictures one more for each of those,
+ * and the room's next cork, which has the lost one's number, is pictured as well.
  */
 function expectTheRooms(page, room, seat = 0) {
   const theirs = room.state.stalls[seat];
@@ -287,8 +311,7 @@ function expectTheRooms(page, room, seat = 0) {
   if (lost === 0) expect(fired).toEqual(each(theirs.shots));
   else {
     expect([...new Set(fired)].sort((a, b) => a - b)).toEqual(each(theirs.shots));
-    expect(fired.length - theirs.shots).toBeGreaterThanOrEqual(0);
-    expect(fired.length - theirs.shots).toBeLessThanOrEqual(lost);
+    expect(fired.length).toBe(theirs.shots + lost);
   }
   expect({ shots: mine.shots, corksLeft: mine.corksLeft }).toEqual({ shots: theirs.shots, corksLeft: theirs.corksLeft });
 }
