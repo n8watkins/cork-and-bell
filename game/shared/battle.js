@@ -137,9 +137,11 @@ export const game = {
       // rebuilt from a snapshot, which of its corks the room had heard: nothing is judged by it.
       const q = Number.isSafeInteger(data.q) ? data.q : undefined;
       if (q !== undefined) state.heard[seat] = Math.max(state.heard[seat] ?? 0, q);
+      // A stamp and an aim are numbers, or the cork is refused: what a page sends is relayed to
+      // every screen, which must make the same of it as the room.
+      if (!data.f.every(Number.isFinite)) return;
       const tNow = roundTime(state, now);
-      const stamp = Number(data.f[0]);
-      if (!Number.isFinite(stamp)) return;
+      const stamp = data.f[0];
       // The client's own timestamp is used when it is believable, so its picture and the room agree.
       const at = Math.max(tNow - 0.5, Math.min(tNow + 0.08, stamp));
       // Whether the cork was cocked is judged by when the page fired it, in the room's time: its
@@ -155,14 +157,15 @@ export const game = {
       const want = Math.min(tNow, stamp + lag);
       // When the least lag has just fallen, the last cork was judged that much late: allow it.
       const slack = Number.isFinite(before) ? Math.max(0, before - lag) : 0;
-      if (!sim.fire(at, Number(data.f[1]), Number(data.f[2]), want, slack)) return;
+      if (!sim.fire(at, data.f[1], data.f[2], want, slack)) return;
       // Every screen mirrors this stall from what is relayed here, and the stall has not judged the
       // cork yet (it does when the cork's time comes). So a screen is sent all the stall will judge
       // it by, `want` and `slack`, and the cork's number in the stall's line (`n`), which tells a
       // screen that was rebuilt from a snapshot whether the snapshot already had this cork. The
       // page's own number for it (`q`) goes back too: it tells the page which cork the room has.
+      // The aim is the one the stall will fire (held to the stall), not what the page sent.
       const shot = sim.pending[sim.pending.length - 1];
-      state.out.push({ k: "f", seat, n: shot.n, ...(q !== undefined && { q }), at: shot.at, want: shot.want, slack: shot.slack, ax: data.f[1], ay: data.f[2] });
+      state.out.push({ k: "f", seat, n: shot.n, ...(q !== undefined && { q }), at: shot.at, want: shot.want, slack: shot.slack, ax: shot.ax, ay: shot.ay });
     } else if (Number.isInteger(data.pick)) {
       if (data.pick === -1) delete state.picks[seat];
       else if (state.stalls[data.pick] && data.pick !== seat) state.picks[seat] = data.pick;

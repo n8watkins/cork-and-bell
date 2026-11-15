@@ -236,6 +236,25 @@ describe("a watcher's picture of a stall", () => {
     expect(seen).toEqual([0]);
   });
 
+  it("pictures every cork the room counts, whatever a page sends for its aim", () => {
+    const room = makeRoom();
+    const watcher = room.join({ down: () => 40 });
+    room.run(4000);
+    // Aims as text, off the stall, and not numbers at all: the room fires what it makes of them.
+    const aims = [["0", "2.6"], [5, -3], [0.25, "1.5"], [-0.4, 1.1], [null, 2], ["x", 1]];
+    for (const [ax, ay] of aims) {
+      room.inputs.push({ at: room.now + 1, sentAt: room.now, seat: 0, d: { f: [room.t(), ax, ay] }, page: { lost: 0 } });
+      room.run(room.now + 600);
+    }
+    room.run(room.now + 2000);
+    const counted = room.state.stalls[0].shots;
+    expect(counted).toBeGreaterThanOrEqual(2);
+    expect(watcher.fired[0]).toEqual(each(counted));
+    expect(watcher.session.sims[0].shots).toBe(counted);
+    // And they flew where the room's did.
+    expect(watcher.session.sims[0].rested).toEqual(room.state.stalls[0].rested);
+  });
+
   it("fires each cork once after a frozen page comes back and is handed the whole room again", () => {
     const room = makeRoom();
     room.join({ seat: 0, play: hammer });
