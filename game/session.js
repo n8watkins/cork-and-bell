@@ -103,6 +103,8 @@ export class NetSession {
     this.lastStamp = -10;
     /** seat -> how far this screen had pictured the stall (round time) when the stall was last rebuilt. */
     this.shown = {};
+    /** seat -> the number after the last cork this screen pictured leaving that stall. */
+    this.pictured = {};
     /** "fire" events for the corks a rebuild brought already in the air, which this screen never saw leave. */
     this.arrived = [];
     this.adopt(snapshot, true);
@@ -140,6 +142,7 @@ export class NetSession {
         this.sent = [];
         this.lastStamp = -10;
         this.shown = {};
+        this.pictured = {};
         this.arrived = [];
       }
       this.sims = {};
@@ -168,11 +171,20 @@ export class NetSession {
       this.sent = this.sent.filter((s) => s[0] > t - 2);
       for (const [at, ax, ay] of this.sent) sim.fireCocked(at, ax, ay);
     }
-    if (shown === undefined) return;
+    if (shown === undefined) {
+      // A screen that has just come to the round: what flew before it came is not news.
+      this.pictured[sim.seat] = sim.shots;
+      return;
+    }
     this.shown[sim.seat] = shown;
-    // The corks the room fired after the last moment this screen pictured are in the air in the
-    // snapshot: this screen never saw them leave, so it is told now.
-    for (const c of sim.corks) if (c.born > shown) this.arrived.push({ k: "fire", seat: sim.seat, id: c.id, t: c.born, ax: c.ax, ay: c.ay });
+    // The snapshot's corks in the air that this screen never saw leave (the room's word of them
+    // was still on its way, or still unread): it is told of them now. By the cork's number, not
+    // its time: word that comes late is of a cork fired before the moment this screen had reached.
+    for (const c of sim.corks) {
+      if (c.id < (this.pictured[sim.seat] ?? 0)) continue;
+      this.pictured[sim.seat] = c.id + 1;
+      this.arrived.push({ k: "fire", seat: sim.seat, id: c.id, t: c.born, ax: c.ax, ay: c.ay });
+    }
   }
 
   time() {
@@ -243,7 +255,10 @@ export class NetSession {
       for (const e of sim.events) {
         // A rebuilt stall of our own plays again the moments since the room's snapshot: the corks
         // it fires again are corks this screen has pictured.
-        if (e.k === "fire" && e.t <= (this.shown[s.seat] ?? -Infinity)) continue;
+        if (e.k === "fire") {
+          if (e.t <= (this.shown[s.seat] ?? -Infinity)) continue;
+          this.pictured[s.seat] = Math.max(this.pictured[s.seat] ?? 0, e.id + 1);
+        }
         // A dead-centre hit inside a warning is a block: show it now, the room will confirm it.
         if (e.k === "hit" && e.perfect && s.seat === this.mySeat) {
           const atk = this.attacks.find((a) => a.to === s.seat && !a.landed && !a.done && !a.returned && e.t < a.at && e.t >= a.sent);

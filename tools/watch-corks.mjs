@@ -117,6 +117,7 @@ try {
             name: r.name,
             counted: r.shots,
             pictured: ids.filter((id) => id < r.shots).length,
+            missing: Array.from({ length: r.shots }, (_, id) => id).filter((id) => !log.fired[r.seat]?.[id]),
             beyond: ids.filter((id) => id >= r.shots).length,
             twice: (log.events[r.seat] ?? 0) - ids.length,
             relayed: log.relayed[r.seat] ?? 0,
@@ -135,7 +136,7 @@ try {
       if (!ok) failed = true;
       console.log(
         "  " + (s.seat === r.mySeat ? "own    " : "watched") + " stall " + s.seat + " (" + s.name + "): room counted " + s.counted + ", pictured " + s.pictured +
-          (s.beyond ? ", " + s.beyond + " the room never counted" : "") + (s.twice ? ", " + s.twice + " pictured twice" : "") +
+          (s.missing.length ? " (never pictured: cork " + s.missing.join(", ") + ")" : "") + (s.beyond ? ", " + s.beyond + " the room never counted" : "") + (s.twice ? ", " + s.twice + " pictured twice" : "") +
           " | relayed " + s.relayed + ", refused by the page " + s.refused + ", rebuilds " + s.rebuilds + (ok ? "" : "   <-- WRONG"),
       );
     }

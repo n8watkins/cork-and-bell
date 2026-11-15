@@ -140,6 +140,36 @@ describe("a watcher's picture of a stall", () => {
     expect(watcher.session.sims[0].shots).toBe(counted);
   });
 
+  it("pictures a cork whose word came late, when a rebuild got there first", () => {
+    const room = makeRoom();
+    const watcher = room.join();
+    room.run(5000);
+    const seen = [];
+    const frame = () => seen.push(...watcher.session.advance(0.016).filter((e) => e.k === "fire").map((e) => e.id));
+    // A cork the room fires a tenth of a second from now. Its word is a third of a second on the
+    // way: by then the watcher's picture is past the cork's time, and the cork is in the air in the room.
+    game.input(room.state, 0, { f: [room.t() - 0.2, 0, 2.6] }, room.now);
+    const events = [];
+    for (let i = 0; i < 10; i++) {
+      events.push(...game.tick(room.state, (room.now += 33)));
+      frame();
+      frame();
+    }
+    expect(room.state.stalls[0].corks.length).toBe(1);
+    expect(seen).toEqual([]);
+    // The word arrives, and before the next frame reads it a snapshot rebuilds the stall.
+    for (const fn of watcher.handlers.events) fn(wire(events));
+    watcher.session.sims[0].score += 1;
+    watcher.session.drift[0] = 3;
+    for (const fn of watcher.handlers.snapshot) fn(wire(game.snapshot(room.state, room.now)), room.now, false);
+    expect(watcher.session.rebuilt).toBe(true);
+    for (let i = 0; i < 30; i++) {
+      room.now += 16;
+      frame();
+    }
+    expect(seen).toEqual([0]);
+  });
+
   it("fires each cork once after a frozen page comes back and is handed the whole room again", () => {
     const room = makeRoom();
     room.join({ seat: 0, play: hammer });
