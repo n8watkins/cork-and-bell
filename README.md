@@ -192,11 +192,13 @@ Where to find Nick:
 - [Maker School](https://www.skool.com/makerschool/about), his paid community on Skool.
 
 Nick's prompt pack is not copied into this repository; get it from him.
+The MIT License here covers this project's own code and assets; Nick's prompts and the wording taken from them remain his and are not licensed by this repository.
 This project is not affiliated with Nick Saraev or endorsed by him.
 
 ## License
 
 The code is under the [MIT License](LICENSE).
+Nick Saraev's prompts, and the wording taken from them, are his and not under the MIT License (see [Credit](#credit)).
 
 Third-party parts keep their own licenses:
 
