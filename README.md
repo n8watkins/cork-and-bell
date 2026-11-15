@@ -6,7 +6,7 @@ One stall on your own, or a battle of two to four stalls side by side.
 The game began from a "cork gallery" build prompt written by Nick Saraev: a stylized shooting gallery of handmade objects at toy scale, lit with baked light and seen through a real lens.
 His prompt is not reproduced here.
 The battle mode and all the code in this repository were made for this project.
-[Credit](#credit) has more about Nick and where to get his prompts.
+[Credit](#credit) has more about Nick and where to get Nick's prompt pack.
 
 This repository is the whole game: clone it, install, and play alone or in a battle.
 The rooms (PINs, seats, reconnecting, the waiting room) come from the party kit in [n8watkins/n8-party-games](https://github.com/n8watkins/n8-party-games), which npm fetches as a development dependency.
@@ -160,7 +160,9 @@ The page makes no request outside its own origin.
 
 ## Credit
 
-<a href="https://www.youtube.com/@nicksaraev"><img src="https://yt3.googleusercontent.com/molHXVKVHeiHHsYtXrxCZNrwfKitFmAoXZ03CNngHmQSRiW9DAjiOYBxQTYiGuXbnLSQnoRa=s176-c-k-c0x00ffffff-no-rj" width="88" height="88" alt="Nick Saraev"></a>
+[![YouTube: @nicksaraev](https://img.shields.io/badge/YouTube-%40nicksaraev-FF0000?logo=youtube&logoColor=white)](https://www.youtube.com/@nicksaraev)
+[![YouTube: the cork gallery video](https://img.shields.io/badge/YouTube-The%20video-FF0000?logo=youtube&logoColor=white)](https://www.youtube.com/watch?v=wpFw66kKixU)
+[![Skool: Maker Zero, where Nick's prompt pack is](https://img.shields.io/badge/Skool-Maker%20Zero-1d1d1f)](https://www.skool.com/maker-zero/about)
 
 Cork & Bell is Nick Saraev's idea first.
 It started from "The cork gallery", one of the build prompts behind his video [I Threw $1000 at Fable 5.2 to Build The Coolest Demos Possible](https://www.youtube.com/watch?v=wpFw66kKixU).
@@ -184,11 +186,12 @@ Added for this project:
 Where to find Nick:
 
 - YouTube: [@nicksaraev](https://www.youtube.com/@nicksaraev)
+- The video: [I Threw $1000 at Fable 5.2 to Build The Coolest Demos Possible](https://www.youtube.com/watch?v=wpFw66kKixU)
 - [Maker Zero](https://www.skool.com/maker-zero/about), his free community on Skool.
-  The video's description says the prompt for every build in it is free there, the cork gallery included.
+  Nick's prompt pack for the video, the cork gallery prompt included, is free there; the video's description sends you there for it.
 - [Maker School](https://www.skool.com/makerschool/about), his paid community on Skool.
 
-His prompts are not copied into this repository; get them from him.
+Nick's prompt pack is not copied into this repository; get it from him.
 This project is not affiliated with Nick Saraev or endorsed by him.
 
 ## License
