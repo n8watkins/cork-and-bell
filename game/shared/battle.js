@@ -40,6 +40,8 @@ export function createBattle({ seed, seats, now, round = 1, delay = SIM_DELAY, b
     picks: {},
     /** seat -> the least lag its cork stamps have shown, in seconds of round time (input). */
     lag: {},
+    /** seat -> the number (`q`) of the last cork heard from its page, for that page's rebuilds. */
+    heard: {},
     bots: {},
     botSkill,
     attacks: [],
@@ -131,6 +133,10 @@ export const game = {
     const sim = state.stalls[seat];
     if (!sim || !data || typeof data !== "object") return;
     if (Array.isArray(data.f) && data.f.length === 3) {
+      // A page numbers its corks (older pages do not). The number only tells the page, when it is
+      // rebuilt from a snapshot, which of its corks the room had heard: nothing is judged by it.
+      const q = Number.isSafeInteger(data.q) ? data.q : undefined;
+      if (q !== undefined) state.heard[seat] = Math.max(state.heard[seat] ?? 0, q);
       const tNow = roundTime(state, now);
       const stamp = Number(data.f[0]);
       if (!Number.isFinite(stamp)) return;
@@ -153,9 +159,10 @@ export const game = {
       // Every screen mirrors this stall from what is relayed here, and the stall has not judged the
       // cork yet (it does when the cork's time comes). So a screen is sent all the stall will judge
       // it by, `want` and `slack`, and the cork's number in the stall's line (`n`), which tells a
-      // screen that was rebuilt from a snapshot whether the snapshot already had this cork.
+      // screen that was rebuilt from a snapshot whether the snapshot already had this cork. The
+      // page's own number for it (`q`) goes back too: it tells the page which cork the room has.
       const shot = sim.pending[sim.pending.length - 1];
-      state.out.push({ k: "f", seat, n: shot.n, at: shot.at, want: shot.want, slack: shot.slack, ax: data.f[1], ay: data.f[2] });
+      state.out.push({ k: "f", seat, n: shot.n, ...(q !== undefined && { q }), at: shot.at, want: shot.want, slack: shot.slack, ax: data.f[1], ay: data.f[2] });
     } else if (Number.isInteger(data.pick)) {
       if (data.pick === -1) delete state.picks[seat];
       else if (state.stalls[data.pick] && data.pick !== seat) state.picks[seat] = data.pick;
@@ -268,7 +275,7 @@ export const game = {
       seats: state.seats,
       picks: state.picks,
       ended: state.endAt !== null,
-      stalls: state.seats.map((s) => dumpStall(state.stalls[s.seat])),
+      stalls: state.seats.map((s) => dumpStall(state.stalls[s.seat], state.heard[s.seat])),
       attacks: state.attacks.filter((a) => !a.done),
     };
   },
@@ -305,10 +312,13 @@ const r3 = (v) => Math.round(v * 1000) / 1000;
  * it has drifted. What decides which corks fly is sent exactly, not rounded: the stall's time (its
  * steps then fall where the room's do), when the last cork was fired, the corks waiting for their
  * time and the corks in the air. A rebuilt stall goes on to fire the corks the room's will.
+ * `heard` is the number of the last cork the room heard from the stall's page (see input), when
+ * the page numbers them: the page fires again, on its rebuilt stall, only the corks after it.
  */
-export function dumpStall(sim) {
+export function dumpStall(sim, heard) {
   return {
     ...sim.summary(),
+    ...(heard !== undefined && { heard }),
     t: sim.t,
     lastFire: r3(sim.lastFire),
     lastWant: sim.lastWant,

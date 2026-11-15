@@ -17,37 +17,79 @@ const SEATS = [
  * does (30 times a second, the events and then every 15th tick a snapshot); each page hears it
  * `down(now)` ms later, draws a frame every 16 ms unless `frozen(now)`, and its inputs take
  * `up(now)` ms to reach the room.
+ *
+ * A connection can fail three ways. While `dropped(now)` the page has no socket: it hears
+ * nothing and `sendInput` returns false, and when it is back the room sends it a full snapshot at
+ * once, outside the tick, as the party kit's room does on a connect (with a bot standing in
+ * meanwhile when `standIn`). While `deaf(now)` what the room sends the page is lost (a socket
+ * dying from the room's side first). While `mute(now)` the page's inputs are taken and lost on
+ * the way (a socket dying from the page's side first).
  */
-function makeRoom({ seed = 7 } = {}) {
-  const room = { now: 0, state: game.create({ seed, seats: SEATS, now: 0, round: 1 }), pages: [], inputs: [], ticks: 0 };
+function makeRoom({ seed = 7, standIn = false, oldRoom = false } = {}) {
+  const room = { now: 0, state: game.create({ seed, seats: SEATS, now: 0, round: 1 }), pages: [], inputs: [], ticks: 0, standing: new Set() };
   room.t = () => room.now / 1000 - COUNT_IN;
-  room.join = ({ seat = -1, offset = 0, up = () => 20, down = () => 20, frozen = () => false, play = () => {} } = {}) => {
-    const page = { seat, down, frozen, play, inbox: [], handlers: {}, fired: {}, lastIn: 0, lastUp: 0 };
+  room.join = ({ seat = -1, offset = 0, up = () => 20, down = () => 20, frozen = () => false, dropped = () => false, deaf = () => false, mute = () => false, oldPage = false, play = () => {} } = {}) => {
+    const page = { seat, down, frozen, dropped, deaf, play, inbox: [], handlers: {}, fired: {}, lastIn: 0, lastUp: 0, away: false, lost: 0 };
     page.party = {
       on: (name, fn) => ((page.handlers[name] ??= []).push(fn), () => {}),
       now: () => room.now + offset,
       sendInput: (d) => {
+        if (page.dropped(room.now)) return false;
         page.lastUp = Math.max(page.lastUp, room.now + up(room.now));
-        room.inputs.push({ at: page.lastUp, seat, d: wire(d) });
+        // A page from before corks were numbered sends none.
+        const sent = wire(d);
+        if (oldPage) delete sent.q;
+        if (mute(room.now)) page.lost += 1;
+        else room.inputs.push({ at: page.lastUp, sentAt: room.now, seat, d: sent, page });
+        return true;
       },
     };
     page.session = new NetSession(page.party, wire(game.snapshot(room.state, room.now)), seat);
     room.pages.push(page);
     return page;
   };
+  /** As the room sends it to one page. */
+  room.sendTo = (page, name, ...data) => {
+    if (page.dropped(room.now) || page.deaf(room.now)) return;
+    page.lastIn = Math.max(page.lastIn, room.now + page.down(room.now));
+    const sent = wire(data);
+    if (oldRoom) {
+      // A room from before corks were numbered relays no number and keeps none.
+      if (name === "events") for (const e of sent[0]) delete e.q;
+      if (name === "snapshot") for (const s of sent[0].stalls) delete s.heard;
+    }
+    page.inbox.push({ at: page.lastIn, name, data: sent });
+  };
   /** As the room sends it: to every page, in order. */
   room.send = (name, ...data) => {
-    for (const page of room.pages) {
-      page.lastIn = Math.max(page.lastIn, room.now + page.down(room.now));
-      page.inbox.push({ at: page.lastIn, name, data: wire(data) });
-    }
+    for (const page of room.pages) room.sendTo(page, name, ...data);
   };
   room.run = (until) => {
     while (room.now < until) {
       room.now += 1;
-      room.inputs = room.inputs.filter((i) => i.at > room.now || (game.input(room.state, i.seat, i.d, room.now), false));
+      room.inputs = room.inputs.filter((i) => {
+        if (i.at > room.now) return true;
+        // What was on its way when the connection dropped is lost with it.
+        if (i.page.droppedSince > i.sentAt) i.page.lost += 1;
+        else game.input(room.state, i.seat, i.d, room.now);
+        return false;
+      });
+      for (const page of room.pages) {
+        const away = page.dropped(room.now);
+        if (away && !page.away) {
+          page.droppedSince = room.now;
+          if (page.seat >= 0 && standIn) room.standing.add(page.seat);
+        }
+        if (!away && page.away) {
+          room.standing.delete(page.seat);
+          for (const fn of page.handlers.status ?? []) fn("open");
+          room.sendTo(page, "snapshot", game.snapshot(room.state, room.now), room.now, true);
+        }
+        page.away = away;
+      }
       if (room.now % 33 === 0) {
         room.ticks += 1;
+        for (const seat of room.standing) for (const d of game.bot(room.state, seat, room.now)) game.input(room.state, seat, d, room.now);
         const events = game.tick(room.state, room.now);
         if (events.length) room.send("events", events);
         if (room.ticks % 15 === 0) room.send("snapshot", game.snapshot(room.state, room.now), room.now, false);
@@ -228,6 +270,95 @@ describe("a player's own picture of their stall", () => {
     expect(counted).toBeGreaterThanOrEqual(25);
     expect(me.fired[0]).toEqual(each(counted));
     expect(me.session.sims[0].shots).toBe(counted);
+  });
+});
+
+/**
+ * A page's picture of a stall against the room's: every cork pictured once, and the same corks
+ * left. A cork of the page's own that the connection took and lost on the way flew on the page
+ * when it was fired, and the room never counted it: the page pictures up to one more for each of
+ * those. (Not always one more: a cork a stand-in bot fired meanwhile can have the lost one's number.)
+ */
+function expectTheRooms(page, room, seat = 0) {
+  const theirs = room.state.stalls[seat];
+  const mine = page.session.sims[seat];
+  const fired = page.fired[seat] ?? [];
+  const lost = seat === page.seat ? page.lost : 0;
+  if (lost === 0) expect(fired).toEqual(each(theirs.shots));
+  else {
+    expect([...new Set(fired)].sort((a, b) => a - b)).toEqual(each(theirs.shots));
+    expect(fired.length - theirs.shots).toBeGreaterThanOrEqual(0);
+    expect(fired.length - theirs.shots).toBeLessThanOrEqual(lost);
+  }
+  expect({ shots: mine.shots, corksLeft: mine.corksLeft }).toEqual({ shots: theirs.shots, corksLeft: theirs.corksLeft });
+}
+
+/** Sends the page the whole room again at `at`, as the room does when its socket comes back. */
+const handBack = (at, play) => {
+  let done = false;
+  return (page, room) => {
+    play(page, room);
+    if (done || room.now < at) return;
+    done = true;
+    room.sendTo(page, "snapshot", game.snapshot(room.state, room.now), room.now, true);
+  };
+};
+
+describe("a player's own picture after the connection fails", () => {
+  // Fired as fast as the lever allows, the 70 corks are gone a little after 37 s.
+  const END = 42000;
+
+  it("comes back with the room's corks when the room's word to it was lost", () => {
+    for (const [from, ms] of [
+      [6000, 400],
+      [6007, 400],
+      [6019, 700],
+    ]) {
+      const room = makeRoom();
+      // The room heard the corks, but its word of them never came: the snapshot when the page is
+      // back already has them, and they must not fly twice on the page.
+      const me = room.join({ seat: 0, up: () => 40, down: () => 40, deaf: (now) => now >= from && now < from + ms, play: handBack(from + ms, hammer) });
+      room.run(END);
+      expect(room.state.stalls[0].corksLeft).toBe(0);
+      expectTheRooms(me, room);
+    }
+  });
+
+  it("does not picture a cork the connection did not take", () => {
+    for (const standIn of [false, true]) {
+      for (const from of [5000, 5011, 5023]) {
+        const room = makeRoom({ standIn });
+        const me = room.join({ seat: 0, up: () => 40, down: () => 40, dropped: (now) => now >= from && now < from + 700, play: hammer });
+        room.run(END);
+        expectTheRooms(me, room);
+      }
+    }
+  });
+
+  it("tells its corks apart by number, also two at one aim when the first was lost on the way", () => {
+    const room = makeRoom();
+    // One cork is taken by a dying socket and never reaches the room; the next, at the same aim, does.
+    const me = room.join({ seat: 0, up: () => 40, down: () => 40, mute: (now) => now >= 6000 && now < 6500, play: handBack(7300, hammer) });
+    room.run(END);
+    // Back in step with the room, the page fires the cork that was lost again later.
+    expect(room.state.stalls[0].shots).toBe(70);
+    expectTheRooms(me, room);
+  });
+
+  it("keeps working with a room or a page from before corks were numbered", () => {
+    for (const [oldRoom, oldPage] of [
+      [true, false],
+      [false, true],
+    ]) {
+      const room = makeRoom({ oldRoom });
+      const me = room.join({ seat: 0, up: () => 40, down: () => 40, oldPage, play: handBack(9000, ragged) });
+      const watcher = room.join({ down: () => 60, play: handBack(9000, () => {}) });
+      room.run(18000);
+      me.play = () => {};
+      room.run(21000);
+      expectTheRooms(me, room);
+      expectTheRooms(watcher, room);
+    }
   });
 });
 

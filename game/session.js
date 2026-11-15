@@ -97,8 +97,12 @@ export class NetSession {
     this.finalResult = null;
     this.history = [];
     this.drift = {};
-    /** This page's own corks the room has not relayed back yet, as they were sent: [stamp, ax, ay]. */
+    /** This page's own corks the room has not relayed back yet, as they were sent: {q, f: [stamp, ax, ay]}. */
     this.sent = [];
+    /** The number of this page's last cork this round (each input carries its number, `q`). */
+    this.q = 0;
+    /** The number of the last cork sent before the connection last opened. */
+    this.opened = 0;
     /** The stamp of this page's last cork. The room judges whether a cork was cocked by these. */
     this.lastStamp = -10;
     /** seat -> how far this screen had pictured the stall (round time) when the stall was last rebuilt. */
@@ -110,7 +114,13 @@ export class NetSession {
     this.adopt(snapshot, true);
     this.off = [
       party.on("events", (events) => this.hear(events)),
-      party.on("snapshot", (s, now, full) => (full ? this.adopt(s, true) : this.check(s))),
+      party.on("snapshot", (s, now, full) => (full ? this.adopt(s, true, true) : this.check(s))),
+      // The room sends the whole of itself (a full snapshot) as soon as a connection opens, before
+      // it reads anything sent on it. So of the corks sent before, the ones it had not heard by
+      // then were lost with the old connection.
+      party.on("status", (status) => {
+        if (status === "open") this.opened = this.q;
+      }),
     ];
   }
 
@@ -123,14 +133,19 @@ export class NetSession {
     for (const e of events) {
       if (e.k !== "f" || e.seat !== this.mySeat) continue;
       // The room has our cork. It hears them in the order they were sent, so one sent before this
-      // and never relayed was not taken at all.
-      const i = this.sent.findIndex((s) => s[1] === e.ax && s[2] === e.ay);
-      if (i >= 0) this.sent.splice(0, i + 1);
+      // and never relayed was not taken at all. A room that numbers nothing (older code) is
+      // matched by the aim, which cannot tell two corks at one aim apart.
+      if (Number.isInteger(e.q)) this.sent = this.sent.filter((s) => s.q > e.q);
+      else {
+        const i = this.sent.findIndex((s) => s.f[1] === e.ax && s.f[2] === e.ay);
+        if (i >= 0) this.sent.splice(0, i + 1);
+      }
     }
     this.queue.push(...events);
   }
 
-  adopt(snap, rebuild) {
+  /** `fresh`: the snapshot a connection opens with. */
+  adopt(snap, rebuild, fresh = false) {
     const sameRound = snap.startAt === this.startAt && snap.round === this.round;
     this.startAt = snap.startAt;
     this.seed = snap.seed;
@@ -140,6 +155,8 @@ export class NetSession {
       const before = sameRound ? this.sims : {};
       if (!sameRound) {
         this.sent = [];
+        this.q = 0;
+        this.opened = 0;
         this.lastStamp = -10;
         this.shown = {};
         this.pictured = {};
@@ -148,7 +165,7 @@ export class NetSession {
       this.sims = {};
       snap.seats.forEach((s, i) => {
         const sim = new StallSim(snap.seed, s.seat);
-        if (snap.t > -COUNT_IN + 0.2) this.load(sim, snap.stalls[i], before[s.seat]?.t);
+        if (snap.t > -COUNT_IN + 0.2) this.load(sim, snap.stalls[i], before[s.seat]?.t, fresh);
         else sim.t = -COUNT_IN - 1;
         this.sims[s.seat] = sim;
       });
@@ -160,16 +177,27 @@ export class NetSession {
 
   /**
    * Makes a stall the room's, from a snapshot: its numbers, the corks in the air and the corks
-   * waiting for their time. `shown` is how far this screen had pictured the stall, if it had.
+   * waiting for their time. `shown` is how far this screen had pictured the stall, if it had;
+   * `fresh`, that the snapshot is the one a connection opens with.
    */
-  load(sim, theirs, shown) {
+  load(sim, theirs, shown, fresh) {
     loadStall(sim, theirs);
     if (sim.seat === this.mySeat) {
       // Our own corks the room had not heard when it took the snapshot are not in it, and the
-      // room will count them: they fly here as they did. (One the room never relays is let go.)
+      // room will count them: they fly here as they did. The room says the number of the last
+      // cork it heard (`heard`); the corks up to it are in the snapshot already, fired or waiting,
+      // or were refused. A room that says nothing (older code) leaves it to the time.
+      if (Number.isInteger(theirs.heard)) {
+        this.sent = this.sent.filter((s) => s.q > theirs.heard);
+        // A page that has just come back to the round (a reload) numbers on from the room's count.
+        this.q = Math.max(this.q, theirs.heard);
+      }
+      // The corks sent on a connection that has closed and not heard by now never will be. (So is
+      // one the room has still not heard two seconds on, where the page is not told of connections.)
+      if (fresh) this.sent = this.sent.filter((s) => s.q > this.opened);
       const t = this.time();
-      this.sent = this.sent.filter((s) => s[0] > t - 2);
-      for (const [at, ax, ay] of this.sent) sim.fireCocked(at, ax, ay);
+      this.sent = this.sent.filter((s) => s.f[0] > t - 2);
+      for (const s of this.sent) sim.fireCocked(...s.f);
     }
     if (shown === undefined) {
       // A screen that has just come to the round: what flew before it came is not news.
@@ -205,15 +233,22 @@ export class NetSession {
     return t >= 0 && t < ROUND_SECONDS && !this.ended && !sim.over && sim.corksLeft > 0 && cocked;
   }
 
-  /** Aim and fire, with the room's clock. The room decides what it hit; the picture shows it at once. */
+  /**
+   * Aim and fire, with the room's clock. The room decides what it hit; the picture shows it at once.
+   * A cork the connection does not take (no socket open: `sendInput` returns false) never leaves:
+   * nothing flies, the lever stays cocked, and the page answers as it does to a trigger pulled
+   * too soon (main.js plays the empty click), under the "Connection lost" notice.
+   */
   fire(ax, ay) {
     if (!this.canFire()) return false;
     // The picture fires what the room is sent, to the millisecond and the millimetre.
     const shot = [r3(this.time()), r3(ax), r3(ay)];
+    const q = this.q + 1;
+    if (this.party.sendInput({ f: shot, q }) === false) return false;
+    this.q = q;
     this.sims[this.mySeat].fireCocked(...shot);
     this.lastStamp = shot[0];
-    this.sent.push(shot);
-    this.party.sendInput({ f: shot });
+    this.sent.push({ q, f: shot });
     return true;
   }
 
