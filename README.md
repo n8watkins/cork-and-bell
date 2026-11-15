@@ -6,6 +6,7 @@ One stall on your own, or a battle of two to four stalls side by side.
 The game began from a "cork gallery" build prompt written by Nick Saraev: a stylized shooting gallery of handmade objects at toy scale, lit with baked light and seen through a real lens.
 His prompt is not reproduced here.
 The battle mode and all the code in this repository were made for this project.
+[Credit](#credit) has more about Nick and where to get his prompts.
 
 This repository is the whole game: clone it, install, and play alone or in a battle.
 The rooms (PINs, seats, reconnecting, the waiting room) come from the party kit in [n8watkins/n8-party-games](https://github.com/n8watkins/n8-party-games), which npm fetches as a development dependency.
@@ -156,6 +157,39 @@ The page opened on its own, at `/cork-and-bell/`, never takes this path: without
 
 Abril Fatface and Playfair Display SC, both under the SIL Open Font License (see `game/fonts/`).
 The page makes no request outside its own origin.
+
+## Credit
+
+<a href="https://www.youtube.com/@nicksaraev"><img src="https://yt3.googleusercontent.com/molHXVKVHeiHHsYtXrxCZNrwfKitFmAoXZ03CNngHmQSRiW9DAjiOYBxQTYiGuXbnLSQnoRa=s176-c-k-c0x00ffffff-no-rj" width="88" height="88" alt="Nick Saraev"></a>
+
+Cork & Bell is Nick Saraev's idea first.
+It started from "The cork gallery", one of the build prompts behind his video [I Threw $1000 at Fable 5.2 to Build The Coolest Demos Possible](https://www.youtube.com/watch?v=wpFw66kKixU).
+His own cork gallery is [at 2:46 in the video](https://www.youtube.com/watch?v=wpFw66kKixU&t=166s).
+
+Kept from his prompt:
+
+- The medium: a travelling fairground shooting gallery of the 1930s at dusk, in hand-painted wood, brass, enamelled iron and glass bulbs.
+- The cork pop-gun: a real ballistic arc, so the far row needs a higher aim, and a lever that cocks the gun again in about half a second.
+- Three rows of targets driven by one mechanism you can see, with teapots, moons, stars, a star behind a shutter and a bell.
+- Light baked in Blender Cycles, and a lens whose focus racks to the row under the aim.
+- A bot, a seed and states you can open directly (`?auto=1`, `?seed=`, `?state=`), and sound that stays off until you turn it on.
+- His bar: a frozen frame should pass for a photograph of a restored fairground stall in a museum catalogue.
+
+Added for this project:
+
+- The battle: two to four stalls side by side, attacks that jam, blind or black out a rival's stall, and blocks that send them back.
+- The party room: join from a phone with a PIN or a QR code, keep your seat when you drop, and play it inside the [n8 Party Games](https://github.com/n8watkins/n8-party-games) room.
+- Phone controls, a server for the high score board, the chalked challenges, and every line of code.
+
+Where to find Nick:
+
+- YouTube: [@nicksaraev](https://www.youtube.com/@nicksaraev)
+- [Maker Zero](https://www.skool.com/maker-zero/about), his free community on Skool.
+  The video's description says the prompt for every build in it is free there, the cork gallery included.
+- [Maker School](https://www.skool.com/makerschool/about), his paid community on Skool.
+
+His prompts are not copied into this repository; get them from him.
+This project is not affiliated with Nick Saraev or endorsed by him.
 
 ## License
 
