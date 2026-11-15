@@ -495,6 +495,30 @@ describe("a player's corks in the room", () => {
     expect(state.stalls[0].shots).toBeLessThanOrEqual(2);
   });
 
+  it("judges the corks of a page with no lag at all by their stamps, as any other page's", () => {
+    // A page on the same machine or network as the room can stamp a cork in the very millisecond
+    // the room hears it: its least lag is exactly 0, and the stamp is the room's own clock. Such a
+    // cork was once judged by the stall's step instead (1/120 s), and corks fired 0.481 s apart, as
+    // the lever allows, were refused: 21 of 29 counted in 13.6 s. They are judged by their stamps.
+    const seats = [{ seat: 0, name: "Ada", kind: "human" }];
+    const state = game.create({ seed: 5, seats, now: 0, round: 1 });
+    const arrive = [];
+    for (let t = 4000; t <= 4000 + 13600; t += 481) arrive.push(t);
+    let now = 0;
+    let sent = 0;
+    while (now < 20000) {
+      now += 33;
+      while (sent < arrive.length && arrive[sent] <= now) {
+        game.input(state, 0, { f: [roundTime(state, arrive[sent]), 0, 2.6] }, arrive[sent]);
+        sent++;
+      }
+      game.tick(state, now);
+    }
+    expect(arrive.length).toBe(29);
+    expect(state.lag[0]).toBe(0);
+    expect(state.stalls[0].shots).toBe(29);
+  });
+
   it("keeps only a few corks waiting, so a page cannot swell the snapshots every screen is sent", () => {
     const seats = Array.from({ length: 4 }, (_, i) => ({ seat: i, name: `P${i}`, kind: "human" }));
     const state = game.create({ seed: 3, seats, now: 0, round: 1 });
