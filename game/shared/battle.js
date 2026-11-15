@@ -2,7 +2,8 @@
 // object the room runs. The same code runs in the browser for the solo stall and attract mode,
 // with one seat and no delay.
 //
-// Inputs (never results):  {f: [at, ax, ay]}  fire at round time `at`, aiming at (ax, ay) on the front row's plane
+// Inputs (never results):  {f: [at, ax, ay], q}  fire at round time `at`, aiming at (ax, ay) on the front row's plane;
+//                                             `q` (optional) numbers the page's corks 1, 2, 3 ... in a round
 //                          {pick: seat}       choose which rival your attacks go to (-1: the leader)
 import { BELL_FULL, COCK_SECONDS, JAM_MAX_SECONDS, RICOCHET_TIMES, ROUND_SECONDS, StallSim, TASKS, pendulumBob, predict, resetIndex } from "./sim.js";
 import { PENDULUMS } from "./layout.js";
