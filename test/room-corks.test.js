@@ -5,7 +5,7 @@
 // than against the room before (the last describe).
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { COUNT_IN, GAP_MS, MAX_GAPS, MAX_WAITING, cockedFor, dumpStall, fromRanges, game, landAttacks, loadStall, roundTime, toRanges } from "../game/shared/battle.js";
+import { COUNT_IN, MAX_GAPS, MAX_WAITING, cockedFor, dumpStall, fromRanges, game, landAttacks, loadStall, roundTime, toRanges } from "../game/shared/battle.js";
 import { LocalSession } from "../game/session.js";
 import { StallSim } from "../game/shared/sim.js";
 import { playRound, rng } from "./net-room.js";
@@ -338,7 +338,7 @@ describe("a page's numbered corks", () => {
     // 4 before 3, and 3 comes after the gap was given up on.
     t += 1000;
     expect(fire(4, roundTime(state, t))[0]).toMatchObject({ k: "f", q: 4 });
-    t += GAP_MS + 100;
+    t += 3100;
     expect(game.snapshot(state, t).stalls[0]).toMatchObject({ heard: 4, gaps: [] });
     expect(fire(3, roundTime(state, t))).toEqual([expect.objectContaining({ k: "no", q: 3, why: "again" })]);
   });
@@ -413,6 +413,10 @@ describe("the room's snapshots", () => {
         const copy = loadStall(new StallSim(snap.seed, seats[i].seat), d);
         expect(wire(dumpStall(copy))).toEqual(d);
         const sim = state.stalls[seats[i].seat];
+        // Every time that decides what a cork does is the room's own, not rounded.
+        for (const k of ["t", "lastWant", "plateDown", "plateUpAt", "stunUntil", "shutterHitAt", "bellHitAt", "jamUntil", "jamAt", "mothsUntil", "darkUntil", "queued"]) expect(d[k], k).toEqual(wire(sim[k]));
+        expect(d.pending).toEqual(wire(sim.pending));
+        expect(d.flying).toEqual(wire(sim.corks));
         waiting += sim.pending.length + sim.corks.length;
         const attacks = wire(state.attacks);
         const theirs = [];
