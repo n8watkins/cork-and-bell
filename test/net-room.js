@@ -2,9 +2,12 @@
 // party kit does (events every tick, a snapshot every 15, a full snapshot to a page that comes
 // back), and each page is this repo's NetSession (game/session.js) on a link that can be slow,
 // uneven, frozen or dropped. Used to check that the page as it is today pictures a room's corks
-// no worse than it did against main's room (test/room-corks.test.js).
+// no worse than it did against the room before corks were numbered (test/room-corks.test.js).
+// The same file, beside that room's code (53c44f2) with the same rules, makes the numbers it is
+// held to.
 import { COUNT_IN, game } from "../game/shared/battle.js";
 import { NetSession } from "../game/session.js";
+import { COCK_SECONDS, CORKS_PER_ROUND, ROUND_SECONDS } from "../game/shared/sim.js";
 
 const wire = (v) => JSON.parse(JSON.stringify(v));
 
@@ -135,9 +138,11 @@ export function compare(pageAims = [], roomAims = []) {
 }
 
 /**
- * One whole round: seat 0 (on `link`) and seat 1 fire at random aims whenever their page lets
- * them, and a big screen (on `link` too) watches. What the player's own page and the watcher
- * pictured of stall 0, against the room.
+ * One whole round: seat 0 (on `link`) and seat 1 fire at random aims, at a pace that spends a
+ * round's corks over the round (so the links' faults, anywhere in it, find corks on the way, and
+ * the round runs most of its length however many corks it has), and a big screen (on `link`
+ * too) watches. What the player's own page and the watcher pictured of stall 0, against the room,
+ * and when the round ended.
  */
 export function playRound(link, seed) {
   const R = rng(seed);
@@ -149,12 +154,15 @@ export function playRound(link, seed) {
   const lk = LINKS[link](R);
   const aim = rng(seed * 31 + 7);
   const r3 = (v) => Math.round(v * 1000) / 1000;
-  const play = (page, r) => r.t() >= 0.2 && aim() < 0.3 && page.session.fire(r3((aim() - 0.5) * 2.4), r3(0.5 + aim() * 2));
+  // A cork every (ROUND_SECONDS - 8) / CORKS_PER_ROUND seconds on average: the lever's half second,
+  // then a wait drawn each frame (a page frame is 16 ms here).
+  const wait = Math.max(0.016, (ROUND_SECONDS - 8) / CORKS_PER_ROUND - COCK_SECONDS);
+  const play = (page, r) => r.t() >= 0.2 && aim() < 0.016 / wait && page.session.fire(r3((aim() - 0.5) * 2.4), r3(0.5 + aim() * 2));
   const me = room.join({ seat: 0, ...lk, play });
   room.join({ seat: 1, up: () => 50, down: () => 50, play });
   const watcher = room.join({ seat: -1, ...lk });
   room.run(98000);
   const stall = room.state.stalls[0];
   const of = (page) => ({ ...compare(page.aims[0], room.aims[0]), leftOff: Math.abs(page.session.sims[0].corksLeft - stall.corksLeft) });
-  return { errors: room.errors, counted: stall.shots, own: of(me), watcher: of(watcher) };
+  return { errors: room.errors, counted: stall.shots, endAt: room.state.endAt, own: of(me), watcher: of(watcher) };
 }

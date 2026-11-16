@@ -10,7 +10,7 @@ export const ROUND_SECONDS = 90;
 export const COCK_SECONDS = 0.5;
 /** The most closer than the cocking time two corks may be judged in a room, when its idea of a player's lag has just fallen (see doFire). */
 export const ARRIVAL_SLACK = 0.15;
-export const CORKS_PER_ROUND = 70;
+export const CORKS_PER_ROUND = 35;
 export const BELL_FULL = 8;
 /** A hit by a cork that has already bounced off something pays this many times over. */
 export const RICOCHET_TIMES = 3;

@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 import { HostedParty, findHost } from "../game/hosted.js";
 import { mount, preload } from "../game/party-view.js";
 import { COUNT_IN, game } from "../game/shared/battle.js";
-import { ROUND_SECONDS } from "../game/shared/sim.js";
+import { CORKS_PER_ROUND, ROUND_SECONDS } from "../game/shared/sim.js";
 import { manifest } from "../party.js";
 
 /** A document just big enough for mount(): elements that can be appended, removed and listened to. */
@@ -202,8 +202,12 @@ describe("a round started by a party room", () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ seat: 2, name: "Ann" });
     expect(rows[0].score).toBeGreaterThan(0);
-    // The whole round, and no longer: the count-in, ninety seconds, and the hold at the end.
-    expect(now / 1000).toBeGreaterThan(ROUND_SECONDS + COUNT_IN);
+    // No longer than the whole round (the count-in, ninety seconds, and the hold at the end), and
+    // sooner only because the seat has fired its last cork: thirty-five do not last ninety seconds.
     expect(now / 1000).toBeLessThan(ROUND_SECONDS + COUNT_IN + 3);
+    if (now / 1000 <= ROUND_SECONDS + COUNT_IN) {
+      expect(state.stalls[2].corksLeft).toBe(0);
+      expect(rows[0].shots).toBeGreaterThanOrEqual(CORKS_PER_ROUND);
+    }
   });
 });
