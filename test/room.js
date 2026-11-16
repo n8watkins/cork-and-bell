@@ -9,19 +9,17 @@ export const SEATS = [
   { seat: 1, name: "Bo", kind: "human" },
 ];
 
-/** What a room from before corks were numbered sends: no numbers, no word of refusals. */
+/**
+ * What a room from before corks were numbered sends (origin/main's): a relay is the time and the
+ * aim, a snapshot has no corks waiting or in the air and no place in a line, and there is no word
+ * of refusals or of the round being over.
+ */
 function asOldRoom(name, data) {
-  if (name === "events") {
-    data[0] = data[0].filter((e) => e.k !== "no");
-    for (const e of data[0]) delete e.q;
-  }
+  if (name === "events") data[0] = data[0].filter((e) => e.k !== "no").map((e) => (e.k === "f" ? { k: "f", seat: e.seat, at: e.at, ax: e.ax, ay: e.ay } : e));
   if (name === "snapshot") {
-    for (const s of data[0].stalls) {
-      delete s.heard;
-      delete s.gaps;
-      delete s.firedQ;
-      for (const c of [...(s.pending ?? []), ...(s.flying ?? [])]) delete c.q;
-    }
+    delete data[0].over;
+    delete data[0].endAt;
+    for (const s of data[0].stalls) for (const k of ["heard", "gaps", "firedQ", "queued", "pending", "flying"]) delete s[k];
   }
   return data;
 }
@@ -44,7 +42,7 @@ function asOldRoom(name, data) {
  * The room keeps its own stalls' events (`fires`), and each page what it pictured (`shown`), the
  * corks it took back, and the corks it could not have seen (`unseen`: see `problems`).
  */
-export function makeRoom({ seed = 7, seats = SEATS, standIn = false, oldRoom = false, handshake = "connect" } = {}) {
+export function makeRoom({ seed = 7, seats = SEATS, standIn = false, oldRoom = false, handshake = "connect", thaw = "inbox" } = {}) {
   const state = game.create({ seed, seats, now: 0, round: 1 });
   state.keep = true;
   const room = { now: 0, state, pages: [], inputs: [], later: [], ticks: 0, standing: new Set(), fires: {}, hits: {} };
@@ -137,25 +135,34 @@ export function makeRoom({ seed = 7, seats = SEATS, standIn = false, oldRoom = f
         room.sentLast = room.state.over;
       }
       for (const page of room.pages) {
-        if (page.frozen(room.now)) continue;
+        const held = page.frozen(room.now);
+        // A page back from being held draws a frame before it reads what came meanwhile, or
+        // after (`thaw`): a browser does either.
+        if (!held && page.held && thaw === "frame") frame(page, room);
+        page.held = held;
+        if (held) continue;
         while (page.inbox.length && page.inbox[0].at <= room.now) deliver(page, page.inbox.shift(), room);
-        if (room.now % 16 !== 0) continue;
-        page.play(page, room);
-        for (const e of page.session.advance(0.016)) {
-          if (e.k === "fire") {
-            (page.fired[e.seat] ??= []).push(e.id);
-            const k = key(page, e.seat, e);
-            (page.shown[e.seat] ??= []).push(k);
-            (page.aims[e.seat] ??= {})[k] = [e.ax, e.ay];
-          }
-          if (e.k === "takeback" && e.seat === page.seat) page.takenBack.add(key(page, e.seat, e));
-          if (e.k === "takeback") (page.unpictured[e.seat] ??= []).push(key(page, e.seat, e));
-          if (e.k === "hit") (page.hits[e.seat] ??= []).push(e);
-        }
+        if (room.now % 16 === 0) frame(page, room);
       }
     }
   };
   return room;
+}
+
+/** A page draws a frame: its player plays, and what its session pictures is noted. */
+function frame(page, room) {
+  page.play(page, room);
+  for (const e of page.session.advance(0.016)) {
+    if (e.k === "fire") {
+      (page.fired[e.seat] ??= []).push(e.id);
+      const k = key(page, e.seat, e);
+      (page.shown[e.seat] ??= []).push(k);
+      (page.aims[e.seat] ??= {})[k] = [e.ax, e.ay];
+    }
+    if (e.k === "takeback" && e.seat === page.seat) page.takenBack.add(key(page, e.seat, e));
+    if (e.k === "takeback") (page.unpictured[e.seat] ??= []).push(key(page, e.seat, e));
+    if (e.k === "hit") (page.hits[e.seat] ??= []).push(e);
+  }
 }
 
 /**
@@ -164,27 +171,22 @@ export function makeRoom({ seed = 7, seats = SEATS, standIn = false, oldRoom = f
  * (and so are all of its own in a room that numbers nothing).
  */
 function key(page, seat, c) {
-  if (seat !== page.seat) return `id${c.id}`;
-  if (c.q !== undefined) return `q${c.q}`;
+  if (seat === page.seat && c.q !== undefined) return `q${c.q}`;
   return page.session.numbered ? `n${c.n}` : `id${c.id}`;
 }
 
 /**
- * A page reads one message from the room. When a snapshot rebuilds a stall, the corks of it that
- * had already come to rest in the room and that this screen never pictured cannot be pictured any
- * more (they were fired and fell while the page heard nothing of them): they are `unseen`.
+ * A page reads one message from the room. When the whole room is handed to it (a connection
+ * opened again), the corks that had already come to rest in the room and that this screen never
+ * pictured cannot be pictured any more (they were fired and fell while the page heard nothing of
+ * them): they are `unseen`. Only then: the room's periodic snapshots excuse nothing.
  */
 function deliver(page, msg, room) {
-  const before = page.session.sims;
-  const was = {};
-  for (const [seat, sim] of Object.entries(before ?? {})) was[seat] = [sim, sim.corks];
   if (msg.name === "end") return page.session.finish(msg.data[0].result);
   for (const fn of page.handlers[msg.name] ?? []) fn(...msg.data);
-  if (msg.name !== "snapshot") return;
+  if (msg.name !== "snapshot" || !msg.data[2]) return;
   const snap = msg.data[0];
   snap.seats.forEach((s, i) => {
-    const sim = page.session.sims[s.seat];
-    if (was[s.seat] && was[s.seat][0] === sim && was[s.seat][1] === sim.corks) return;
     const theirs = snap.stalls[i];
     const flying = new Set((theirs.flying ?? []).map((c) => c.id));
     const shown = new Set(page.shown[s.seat] ?? []);

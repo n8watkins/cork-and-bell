@@ -181,6 +181,47 @@ describe("a watcher's picture of a stall", () => {
   });
 });
 
+describe("a page that was held for seconds (a tab in the background, a busy phone)", () => {
+  // What tools/watch-corks.mjs showed end to end, twice out of twice: the page watching a stall
+  // was itself held by the browser for 6.8 s. Back, it drew a frame (its stalls ran on to the
+  // present without the corks it had not read yet), then read the room's snapshots before the
+  // corks relayed ahead of them, found the stall wrong four snapshots running, rebuilt it from a
+  // snapshot in which those corks had come to rest, and never pictured them.
+  const round = (thaw, from, hold) => {
+    const room = makeRoom({ thaw });
+    let k = 0;
+    // The watched player misses for the first seconds of the hold and then hits: the held page's
+    // stall, run on without those corks, is the room's for a while and then is not.
+    const play = (page, r) => {
+      if (r.t() <= 0.5) return;
+      if (r.now >= from && r.now < from + 2500) page.session.fire(0, 2.6);
+      else page.session.fire(((k * 0.37) % 2.4) - 1.2, 0.9 + ((k++ * 0.53) % 1.2));
+    };
+    const host = room.join({ seat: 0, up: () => 40, down: () => 40, frozen: (now) => now >= from && now < from + hold });
+    // The other page is frozen 1.2 s out of every 4 s, as the tool does it.
+    room.join({ seat: 1, up: () => 40, down: () => 40, frozen: (now) => now % 4000 < 1200, play });
+    room.run(48000);
+    return { room, host };
+  };
+
+  it("pictures every cork of the stall it watches, whether it draws or reads first when it is back", () => {
+    for (const thaw of ["frame", "inbox"]) {
+      for (const hold of [2500, 4000, 6800]) {
+        for (const from of [20000, 20333, 20777]) {
+          const { room, host } = round(thaw, from, hold);
+          expect(room.state.stalls[1].shots).toBeGreaterThan(55);
+          expect(problems(host, room), `${thaw} ${hold} ${from}`).toEqual([]);
+        }
+      }
+    }
+  });
+
+  it("does not show the stall further in the past for word it read late itself", () => {
+    const { host } = round("frame", 20000, 6800);
+    expect(host.session.lateBy[1] ?? 0).toBe(0);
+  });
+});
+
 describe("a player's own picture of their stall", () => {
   it("fires exactly the corks the room counts, at the fastest the lever allows", () => {
     // Its corks reach the room unevenly (25 to 61 ms on the way), and its clock is off the room's by

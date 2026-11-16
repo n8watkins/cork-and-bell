@@ -37,6 +37,7 @@ const FOUND = [
   [2179, "the same"],
   [2106, "a watcher heard two corks late and in another order than the room fired them"],
   [2327, "a cork due a hair before the bell: the page stepped on other times than the room"],
+  [22684, "a page frozen over the round's end: the room's last word had cork 59 in the air, noted before the stall's own cork 58 (a count of corks pictured, not their names)"],
 ];
 
 describe("every page's picture of every stall, in random rounds", () => {
