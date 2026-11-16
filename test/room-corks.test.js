@@ -7,7 +7,7 @@ import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { COUNT_IN, MAX_GAPS, MAX_WAITING, cockedFor, dumpStall, fromRanges, game, landAttacks, loadStall, roundTime, toRanges } from "../game/shared/battle.js";
 import { LocalSession } from "../game/session.js";
-import { StallSim } from "../game/shared/sim.js";
+import { CORKS_PER_ROUND, ROUND_SECONDS, StallSim } from "../game/shared/sim.js";
 import { playRound, rng } from "./net-room.js";
 
 const wire = (v) => JSON.parse(JSON.stringify(v));
@@ -28,10 +28,13 @@ function send(state, seat, data, now) {
 }
 
 describe("the room's verdicts", () => {
-  // The same rounds give the same verdicts as main's room code (53c44f2): every stall's score,
-  // corks fired, hits, corks left and best run, over bot rounds and LocalSession rounds of one to
-  // four stalls. (The digests were made by running these rounds on main's code.) The full
-  // comparison (1,200 rounds of each, and of pages with jittery links) is in the pull request.
+  // The same rounds give the same verdicts as the room code before corks were numbered (53c44f2):
+  // every stall's score, corks fired, hits, corks left and best run, over bot rounds and
+  // LocalSession rounds of one to four stalls. The digests were made by running these rounds on
+  // that code with CORKS_PER_ROUND set to this one (35): when the rules change (the corks a round,
+  // say), make them again the same way, from the old room code with the new rule, never from this
+  // code's own output. The full comparison (1,200 rounds of each, and of pages with jittery
+  // links) is in pull requests #8 and #9.
   const summary = (seats, stall) =>
     seats
       .map((s) => {
@@ -57,7 +60,8 @@ describe("the room's verdicts", () => {
       }
       return summary(seats, (s) => state.stalls[s]);
     };
-    expect(digest(bots)).toBe("6e4900d7c031efc6");
+    expect(CORKS_PER_ROUND).toBe(35); // the digests are for 35 corks a round
+    expect(digest(bots)).toBe("5705e43316f7286b");
   });
 
   it("are main's for the solo stall and the demo (LocalSession)", () => {
@@ -76,7 +80,8 @@ describe("the room's verdicts", () => {
       }
       return summary(seats, (s) => ses.sims[s]);
     };
-    expect(digest(local)).toBe("0f37068d09fbc7d6");
+    expect(CORKS_PER_ROUND).toBe(35); // the digests are for 35 corks a round
+    expect(digest(local)).toBe("17604d2e5a97925f");
   });
 
   it("judge the corks of a page with no lag at all by their stamps, as any other page's", () => {
@@ -99,20 +104,24 @@ describe("the room's verdicts", () => {
       game.tick(state, now);
     }
     expect(arrive.length).toBe(29);
+    // Fewer than a round's corks, so the count is the cocking rule's and not the corks running out.
+    expect(arrive.length).toBeLessThan(CORKS_PER_ROUND);
     expect(state.lag[0]).toBe(0);
     expect(state.stalls[0].shots).toBe(29);
   });
 
   it("still let a page lower its apparent lag for faster corks no more than before (known, not fixed)", () => {
     // A page whose first stamp is 6 s old, then each one 0.15 s less old, sent every 0.34 s for
-    // 13.6 s, is given the arrival slack every time: 41 corks, where an honest page tops out near
-    // 29. The same on main. Not fixed here; this keeps a later change from making it worse.
+    // 6.8 s, is given the arrival slack every time: 21 corks, where an honest page firing every
+    // 0.48 s gets 10. The same on the room code before corks were numbered (53c44f2, with 35 corks a
+    // round: 21). Not fixed here; this keeps a later change from making it worse. (Over 13.6 s it
+    // was 41 with 70 corks a round; with 35, the corks run out first, which would hide it.)
     const [state, start] = roomAt(-2.9);
     const sends = [];
     let lag = 6;
     for (let k = 0; ; k++) {
       const arrive = Math.round((4 + k * 0.34) * 1000);
-      if (arrive > (4 + 13.6) * 1000) break;
+      if (arrive > (4 + 6.8) * 1000) break;
       sends.push({ arrive, stamp: arrive / 1000 - COUNT_IN - lag });
       lag = Math.max(-0.6, lag - 0.15);
     }
@@ -123,7 +132,10 @@ describe("the room's verdicts", () => {
       while (i < sends.length && sends[i].arrive <= now) (game.input(state, 0, { f: [sends[i].stamp, 0, 2.6] }, sends[i].arrive), i++);
       game.tick(state, now);
     }
-    expect(state.stalls[0].shots).toBeLessThanOrEqual(41);
+    // The stall still had corks left: the count is the exploit's, not the tray's.
+    expect(sends.length).toBe(21);
+    expect(state.stalls[0].corksLeft).toBeGreaterThan(0);
+    expect(state.stalls[0].shots).toBeLessThanOrEqual(21);
   });
 });
 
@@ -162,39 +174,51 @@ describe("the room's door", () => {
     // stalls for 2 to 8 s twice a round, some firing faster than they may and some corks arriving
     // out of order (as from two connections). Every cork the door refuses as not cocked, a copy of
     // the stall as it was, given the cork as the room would have queued it, refuses too. And a
-    // page that only ever fires cocked corks, in order, has every one of them counted.
+    // page that only ever fires cocked corks, in order, has every one of its round's corks counted.
+    // (Each room has two more seats whose players never fire, so the round runs to the bell: it
+    // ends early when no more than one stall still has corks, and an honest page's last corks
+    // would be refused for the round's end, not by the door.)
     let checked = 0;
+    let honestSeats = 0;
     let honestCorks = 0;
+    let held = 0;
     for (let seed = 1; seed <= 60; seed++) {
       const R = rng(seed);
       const n = 1 + Math.floor(R() * 3);
-      const state = game.create({ seed, seats: humans(n), now: 0, round: 1 });
+      const state = game.create({ seed, seats: humans(n + 2), now: 0, round: 1 });
       const inputs = [];
       const honest = {};
       for (let seat = 0; seat < n; seat++) {
         honest[seat] = R() < 0.5;
         const offset = (R() - 0.5) * 0.6;
         const base = 20 + R() * 100;
-        const stalls = [8 + R() * 30, 45 + R() * 30].map((from) => [from, from + 2 + R() * 6]);
-        let t = 0.3 + R();
-        let q = 0;
-        let prev = 0;
-        while (t < 88 && q < 66) {
-          q += 1;
-          const stamp = Math.round((t + offset) * 1000) / 1000;
-          let arrive = (t + COUNT_IN) * 1000 + base + R() * 40;
-          for (const [from, to] of stalls) if (t >= from && t < to) arrive = Math.max(arrive, (to + COUNT_IN) * 1000 + base);
-          arrive = Math.round(Math.max(arrive, prev));
-          prev = arrive;
-          inputs.push({ seat, q, arrive, f: [stamp, Math.round((R() - 0.5) * 2400) / 1000, Math.round((0.5 + R() * 2) * 1000) / 1000] });
+        // When the page fires: an honest page its round's corks, each cocked (0.5 to 1.7 s apart);
+        // another sometimes too soon, and twice as many as it has.
+        const times = [];
+        for (let t = 0.3 + R(); t < 88 && times.length < (honest[seat] ? CORKS_PER_ROUND : 2 * CORKS_PER_ROUND); ) {
+          times.push(t);
           t += honest[seat] ? 0.5 + R() * 1.2 : R() < 0.3 ? 0.2 + R() * 0.3 : 0.48 + R() * 0.3;
         }
+        // The uplink stalls for 2 to 8 s twice while the page is firing, once in each half.
+        const first = times[0];
+        const span = times[times.length - 1] - first;
+        const stalls = [first + R() * span * 0.4, first + span * (0.5 + R() * 0.4)].map((from) => [from, from + 2 + R() * 6]);
+        let prev = 0;
+        times.forEach((t, k) => {
+          const stamp = Math.round((t + offset) * 1000) / 1000;
+          let arrive = (t + COUNT_IN) * 1000 + base + R() * 40;
+          for (const [from, to] of stalls) if (t >= from && t < to) (arrive = Math.max(arrive, (to + COUNT_IN) * 1000 + base)), (held += honest[seat] ? 1 : 0);
+          arrive = Math.round(Math.max(arrive, prev));
+          prev = arrive;
+          inputs.push({ seat, q: k + 1, arrive, f: [stamp, Math.round((R() - 0.5) * 2400) / 1000, Math.round((0.5 + R() * 2) * 1000) / 1000] });
+        });
       }
-      // Out of order: now and then a later cork of a dishonest page overtakes the one before it.
+      // Out of order: now and then a later cork of a dishonest page overtakes the one before it,
+      // less than a second ahead (a number more than 3 s late is refused for that: another test).
       inputs.sort((a, b) => a.arrive - b.arrive || a.seat - b.seat);
       for (let i = 1; i < inputs.length; i++) {
         const [a, b] = [inputs[i - 1], inputs[i]];
-        if (a.seat === b.seat && !honest[a.seat] && R() < 0.15) [inputs[i - 1], inputs[i]] = [{ ...b, arrive: a.arrive }, { ...a, arrive: b.arrive }];
+        if (a.seat === b.seat && !honest[a.seat] && b.arrive - a.arrive < 1000 && R() < 0.15) [inputs[i - 1], inputs[i]] = [{ ...b, arrive: a.arrive }, { ...a, arrive: b.arrive }];
       }
       let now = 0;
       let i = 0;
@@ -222,17 +246,25 @@ describe("the room's door", () => {
         }
         game.tick(state, now);
       }
+      // The round ran to the bell.
+      expect(state.endAt).toBeGreaterThanOrEqual(ROUND_SECONDS);
       for (let seat = 0; seat < n; seat++) {
         if (!honest[seat]) continue;
         const sent = inputs.filter((x) => x.seat === seat).length;
+        expect(sent).toBe(CORKS_PER_ROUND);
         expect(refusedAtDoor.filter((s) => s === seat)).toEqual([]);
         expect(state.stalls[seat].shots).toBe(sent);
         expect(state.stalls[seat].firedQ).toEqual(Array.from({ length: sent }, (_, k) => k + 1));
+        honestSeats += 1;
         honestCorks += sent;
       }
     }
-    expect(checked).toBeGreaterThan(200);
-    expect(honestCorks).toBeGreaterThan(1000);
+    // (At 35 corks a round: 895 refusals checked, 56 honest pages, 484 of their corks held back.)
+    expect(checked).toBeGreaterThan(400);
+    expect(honestSeats).toBeGreaterThan(40);
+    expect(honestCorks).toBe(honestSeats * CORKS_PER_ROUND);
+    // Honest corks held back by a stalled link, which came to the room in bursts.
+    expect(held).toBeGreaterThan(honestSeats * 4);
   });
 
   it("refuses a stamp or an aim that is not a number, and relays the aim the stall fires", () => {
@@ -401,15 +433,25 @@ describe("the room's snapshots", () => {
     // Bots battle, four stalls with attacks; at moments through the round every stall is rebuilt
     // from the snapshot (as JSON), and the copy and the room's stall are both played on, the same
     // attacks landing on both, with corks in the air and waiting. They come out the same to the last bit.
-    for (const [seed, at] of [[5, 12.3], [6, 40.07], [7, 71.5], [8, 88.9]]) {
-      const seats = Array.from({ length: 4 }, (_, i) => ({ seat: i, name: `B${i}`, kind: "bot" }));
+    // The moments are taken from each round itself (a fifth of the way to its end, nearly half,
+    // ... nearly the end), at the first tick from there with a cork in the air or waiting, so the
+    // test means the same however many corks a round has and so however long the bots take.
+    const seats = Array.from({ length: 4 }, (_, i) => ({ seat: i, name: `B${i}`, kind: "bot" }));
+    const play = (state, now) => {
+      for (const s of seats) for (const d of game.bot(state, s.seat, now)) game.input(state, s.seat, d, now);
+      game.tick(state, now);
+    };
+    const seen = { waiting: 0, flying: 0 };
+    const busy = (state) => seats.some((s) => state.stalls[s.seat].pending.length + state.stalls[s.seat].corks.length > 0);
+    for (const [seed, part] of [[5, 0.2], [6, 0.45], [7, 0.7], [8, 0.95]]) {
+      // How long this round lasts (the same seed plays the same round).
+      const dry = game.create({ seed, seats, now: 0, round: 1 });
+      for (let now = 33; dry.endAt === null; now += 33) play(dry, now);
+      const at = dry.endAt * part;
       const state = game.create({ seed, seats, now: 0, round: 1 });
       let now = 0;
-      while (roundTime(state, now) - state.delay < at) {
-        now += 33;
-        for (const s of seats) for (const d of game.bot(state, s.seat, now)) game.input(state, s.seat, d, now);
-        game.tick(state, now);
-      }
+      while (roundTime(state, now) - state.delay < at || !busy(state)) play(state, (now += 33));
+      expect(state.endAt).toBeNull();
       const snap = wire(game.snapshot(state, now));
       expect(wire(game.snapshot(state, now))).toEqual(snap);
       let waiting = 0;
@@ -422,6 +464,8 @@ describe("the room's snapshots", () => {
         expect(d.pending).toEqual(wire(sim.pending));
         expect(d.flying).toEqual(wire(sim.corks));
         waiting += sim.pending.length + sim.corks.length;
+        seen.waiting += sim.pending.length;
+        seen.flying += sim.corks.length;
         const attacks = wire(state.attacks);
         const theirs = [];
         const mine = [];
@@ -438,6 +482,16 @@ describe("the room's snapshots", () => {
       });
       expect(waiting).toBeGreaterThan(0);
     }
+    // Over the four moments, corks both waiting and in the air were rebuilt.
+    expect(seen.waiting).toBeGreaterThan(0);
+    expect(seen.flying).toBeGreaterThan(0);
+    // A bot's times fall on whole milliseconds, which rounding would keep; a page's need not.
+    const odd = new StallSim(2, 0);
+    odd.step(1);
+    odd.fire(1 + 1 / 3, 0, 2.6, 1 + 1 / 7);
+    odd.step(1.5);
+    expect(wire(dumpStall(odd)).lastWant).toBe(1 + 1 / 7);
+    expect(wire(dumpStall(odd)).t).toBe(odd.t);
   });
 
   it("let a page's own stall rebuilt from one judge the page's next cork by the page's own times", () => {
@@ -482,21 +536,27 @@ describe("today's page against this room", () => {
   // and the new snapshot fields, and is rebuilt by the new loadStall. Whole rounds on clean,
   // jittery, freezing, dropping and stalling links: what the player's own page and a watching
   // screen picture of a stall, against what the room fired, must be no worse than against
-  // main's room. The numbers for main were measured with the same rounds on main's code (53c44f2).
+  // the room before corks were numbered. Its numbers were made by running test/net-room.js's
+  // playRound beside that room's code (53c44f2) with CORKS_PER_ROUND set to this one (35), same
+  // seeds: when the rules change, make them again that way, never from this code's own output.
   const MAIN = {
     clean: { own: [0, 0], watcher: [0, 0, 0] },
     jitter: { own: [0, 0], watcher: [0, 0, 0] },
     frozen: { own: [0, 0], watcher: [0, 0, 0] },
-    dropped: { own: [2, 28], watcher: [4, 3, 0] },
-    uplinkStall: { own: [2, 4], watcher: [22, 4, 1] },
+    dropped: { own: [0, 10], watcher: [1, 0, 0] },
+    uplinkStall: { own: [0, 0], watcher: [7, 0, 5] },
   };
   for (const [link, main] of Object.entries(MAIN)) {
     it(`pictures corks no worse than against main's room: ${link}`, () => {
+      expect(CORKS_PER_ROUND).toBe(35); // the numbers above are for 35 corks a round
       const sum = { own: [0, 0], watcher: [0, 0, 0] };
       for (let seed = 1; seed <= 8; seed++) {
         const r = playRound(link, seed);
         expect(r.errors).toEqual([]);
-        expect(r.counted).toBeGreaterThan(50);
+        // A real round: most of a round's corks fired, and most of the ninety seconds played (it
+        // ends when a player runs out; a frozen page fires fewer).
+        expect(r.counted).toBeGreaterThanOrEqual(CORKS_PER_ROUND * 0.4);
+        expect(r.endAt).toBeGreaterThan(ROUND_SECONDS * 0.6);
         sum.own[0] += r.own.missing;
         sum.own[1] += r.own.extra;
         sum.watcher[0] += r.watcher.missing;
