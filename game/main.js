@@ -717,7 +717,8 @@ function onEvent(e) {
       if (e.from === session.mySeat) showBanner("Fizzled", `${nameOf(e.to)} already has two to deal with.`, { seconds: 1.2 });
       break;
     case "out":
-      if (e.seat === session.mySeat) showBanner("Out of corks", "Your stall has stopped scoring.", { seconds: 2.5 });
+      // In a battle the round goes on for the others: say so, or a player out first waits unsure.
+      if (e.seat === session.mySeat) showBanner("Out of corks", session.seats.length > 1 ? "The round goes on until every stall is out." : "Your stall has stopped scoring.", { seconds: 2.5 });
       break;
     case "time":
       sound.end(false);

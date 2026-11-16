@@ -92,7 +92,8 @@ Decided before any code, and kept everywhere.
 - Attacks go to the leader, unless you tap a rival's token to pick them.
 - Every attack is seen coming for 1.5 seconds. A dead-centre hit in that time blocks it and sends it back with a brass chime.
 - Never more than two at once on one stall; a third fizzles.
-- The round ends at 90 seconds, or when only one stall still has corks.
+- The round ends at 90 seconds, or sooner once every stall is out of corks and the last cork has landed.
+  A player who runs dry first watches the others play on.
 
 ## How it is built
 
