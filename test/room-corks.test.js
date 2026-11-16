@@ -279,6 +279,10 @@ describe("the room's door", () => {
     expect(size).toBeLessThan(quiet + 400);
     expect(size).toBeLessThan(2600);
     // Numbers all over the place: the gaps kept stay few.
+    game.input(state, 2, { f: [roundTime(state, now), 0, 2.6], q: 40 }, now);
+    expect(state.heard[2]).toMatchObject({ q: 40 });
+    expect(state.heard[2].gaps.map((g) => g[0])).toEqual(Array.from({ length: MAX_GAPS }, (_, i) => 40 - MAX_GAPS + i));
+    expect(MAX_GAPS).toBe(16);
     const R = rng(9);
     for (let i = 0; i < 2000; i++) game.input(state, 2, { f: [roundTime(state, now), 0, 2.6], q: 1 + Math.floor(R() * 1e6) }, now);
     expect(state.heard[2].gaps.length).toBeLessThanOrEqual(MAX_GAPS);
