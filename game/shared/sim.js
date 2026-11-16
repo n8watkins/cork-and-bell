@@ -255,9 +255,12 @@ export class StallSim {
    * `q` is the page's own number for the cork, when its page numbers them: it goes with the cork
    * (on the shot, the cork, its "fire" event, and `firedQ`) and tells the page which cork it is.
    */
-  fire(at, ax, ay, want, slack = 0, q) {
+  fire(at, ax, ay, want, slack = 0, q, mirrored = false) {
     if (!Number.isFinite(at) || !Number.isFinite(ax) || !Number.isFinite(ay)) return false;
-    this.queue({ at, ax, ay, want: Number.isFinite(want) ? want : undefined, slack: Math.min(ARRIVAL_SLACK, Math.max(0, slack || 0)), q });
+    // A screen mirroring a room's stall (`mirrored`) is given the time the room fires the cork at;
+    // when the word comes late, the screen fires it later, but judges the bell and the end of the
+    // round by when it was due (doFire), as the room did.
+    this.queue({ at, ax, ay, want: Number.isFinite(want) ? want : undefined, slack: Math.min(ARRIVAL_SLACK, Math.max(0, slack || 0)), q, ...(mirrored && { due: at }) });
     return true;
   }
 
@@ -283,7 +286,10 @@ export class StallSim {
   }
 
   doFire(shot) {
-    if (this.t < 0 || this.t >= ROUND_SECONDS || this.over) return this.refuse(shot, this.t < 0 ? "early" : "late");
+    // The step the cork was due at, when it is fired late (see fire): the first step at or after it
+    // (never before it, as a room fires a cork only at a step at or after its time).
+    const when = shot.due !== undefined && shot.due < this.t ? Math.max(shot.due, this.t - Math.floor((this.t - shot.due) / DT + 1e-9) * DT) : this.t;
+    if (when < 0 || when >= ROUND_SECONDS || this.over) return this.refuse(shot, when < 0 ? "early" : "late");
     const want = shot.cocked ? Math.max(this.t, this.lastWant + COCK_SECONDS) : (shot.want ?? this.t);
     // A room judges by stamps moved by the least lag seen so far, which can fall a little between
     // two corks as the connection settles: that much slack (up to ARRIVAL_SLACK), and no more.
@@ -299,8 +305,21 @@ export class StallSim {
     const lift = (hash(this.seed, n * 3 + 2) - 0.5) * 0.7;
     const q = shot.q !== undefined ? { q: shot.q } : {};
     if (shot.q !== undefined) this.firedQ.push(shot.q);
-    this.corks.push({ id: n, p, v, drift, lift, bounces: 0, struck: 0, born: this.t, age: 0, spin: hash(this.seed, n * 3 + 3), ax: shot.ax, ay: shot.ay, ...q });
+    const c = { id: n, p, v, drift, lift, bounces: 0, struck: 0, born: when, age: 0, spin: hash(this.seed, n * 3 + 3), ax: shot.ax, ay: shot.ay, ...q };
     this.events.push({ k: "fire", seat: this.seat, id: n, n: shot.n, t: this.t, ax: shot.ax, ay: shot.ay, ...q });
+    if (when < this.t) {
+      // Fired late (a screen whose word of the cork came after its time): the cork has flown the
+      // steps since it was due, as the room's did, so it is where the room's is and meets what it met.
+      const now = this.t;
+      let flying = true;
+      for (let k = Math.round((now - when) / DT); k > 0 && flying; k--) {
+        this.t = now - k * DT;
+        flying = this.stepCork(c);
+      }
+      this.t = now;
+      if (!flying) return;
+    }
+    this.corks.push(c);
   }
 
   /**

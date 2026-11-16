@@ -47,10 +47,10 @@ function asOldRoom(name, data) {
 export function makeRoom({ seed = 7, seats = SEATS, standIn = false, oldRoom = false, handshake = "connect" } = {}) {
   const state = game.create({ seed, seats, now: 0, round: 1 });
   state.keep = true;
-  const room = { now: 0, state, pages: [], inputs: [], later: [], ticks: 0, standing: new Set(), fires: {}, refusedAtDoor: 0 };
+  const room = { now: 0, state, pages: [], inputs: [], later: [], ticks: 0, standing: new Set(), fires: {}, hits: {} };
   room.t = () => room.now / 1000 - COUNT_IN;
   room.join = ({ seat = -1, offset = 0, up = () => 20, down = () => 20, frozen = () => false, dropped = () => false, deaf = () => false, mute = () => false, oldPage = false, play = () => {} } = {}) => {
-    const page = { seat, down, up, frozen, dropped, deaf, play, inbox: [], handlers: {}, fired: {}, shown: {}, aims: {}, takenBack: new Set(), unseen: {}, lastIn: 0, lastUp: 0, away: false, wasDeaf: false, lost: 0 };
+    const page = { seat, down, up, frozen, dropped, deaf, play, inbox: [], handlers: {}, fired: {}, shown: {}, aims: {}, hits: {}, unpictured: {}, takenBack: new Set(), unseen: {}, lastIn: 0, lastUp: 0, away: false, wasDeaf: false, lost: 0 };
     page.party = {
       on: (name, fn) => ((page.handlers[name] ??= []).push(fn), () => {}),
       now: () => room.now + offset,
@@ -71,7 +71,7 @@ export function makeRoom({ seed = 7, seats = SEATS, standIn = false, oldRoom = f
   };
   /** As the room sends it to one page. */
   room.sendTo = (page, name, ...data) => {
-    if (page.dropped(room.now) || page.deaf(room.now)) return;
+    if (page.dropped(room.now) || page.deaf(room.now) || page.hello) return;
     page.lastIn = Math.max(page.lastIn, room.now + page.down(room.now));
     const sent = oldRoom ? asOldRoom(name, wire(data)) : wire(data);
     page.inbox.push({ at: page.lastIn, name, data: sent });
@@ -83,8 +83,13 @@ export function makeRoom({ seed = 7, seats = SEATS, standIn = false, oldRoom = f
   /** The whole room, as a page that has (re)connected is sent it. */
   room.handBack = (page) => {
     for (const fn of page.handlers.status ?? []) fn("open");
-    if (handshake === "hello") room.later.push({ at: room.now + page.up(room.now), page });
-    else room.sendTo(page, "snapshot", game.snapshot(room.state, room.now), room.now, true);
+    if (handshake === "hello") {
+      // The hello goes first on the new connection: what the page sends after it arrives after it,
+      // and the room sends the socket nothing until it has read it.
+      page.lastUp = Math.max(page.lastUp, room.now + page.up(room.now));
+      page.hello = true;
+      room.later.push({ at: page.lastUp, page });
+    } else room.sendTo(page, "snapshot", game.snapshot(room.state, room.now), room.now, true);
   };
   room.run = (until) => {
     while (room.now < until) {
@@ -108,19 +113,28 @@ export function makeRoom({ seed = 7, seats = SEATS, standIn = false, oldRoom = f
         page.away = away;
         page.wasDeaf = deaf;
       }
-      room.later = room.later.filter((l) => l.at > room.now || (room.sendTo(l.page, "snapshot", game.snapshot(room.state, room.now), room.now, true), false));
-      if (room.now % 33 === 0) {
+      room.later = room.later.filter((l) => {
+        if (l.at > room.now) return true;
+        l.page.hello = false;
+        room.sendTo(l.page, "snapshot", game.snapshot(room.state, room.now), room.now, true);
+        return false;
+      });
+      // Once the round is over the room plays it no more (the party kit ends the match).
+      if (room.now % 33 === 0 && !room.sentLast) {
         room.ticks += 1;
         const bots = new Set(room.standing);
         for (const s of room.state.seats) if (s.kind === "bot") bots.add(s.seat);
         for (const seat of bots) for (const d of game.bot(room.state, seat, room.now)) game.input(room.state, seat, d, room.now);
         const events = game.tick(room.state, room.now);
-        for (const e of room.state.simEvents.splice(0)) if (e.k === "fire") (room.fires[e.seat] ??= []).push({ id: e.id, q: e.q, aim: [e.ax, e.ay] });
-        if (events.length) room.send("events", events);
-        if (room.ticks % 15 === 0 || (room.state.over && !room.sentLast)) {
-          room.sentLast = room.state.over;
-          room.send("snapshot", game.snapshot(room.state, room.now), room.now, false);
+        for (const e of room.state.simEvents.splice(0)) {
+          if (e.k === "fire") (room.fires[e.seat] ??= []).push({ id: e.id, q: e.q, aim: [e.ax, e.ay], t: e.t, at: room.now });
+          if (e.k === "hit") (room.hits[e.seat] ??= []).push(e);
         }
+        if (events.length) room.send("events", events);
+        if (room.ticks % 15 === 0 || (room.state.over && !room.sentLast)) room.send("snapshot", game.snapshot(room.state, room.now), room.now, false);
+        // The round is over: the room's last snapshot, then its result (main.js hands it to finish).
+        if (room.state.over && !room.sentLast) room.send("end", { result: game.result(room.state) });
+        room.sentLast = room.state.over;
       }
       for (const page of room.pages) {
         if (page.frozen(room.now)) continue;
@@ -134,7 +148,9 @@ export function makeRoom({ seed = 7, seats = SEATS, standIn = false, oldRoom = f
             (page.shown[e.seat] ??= []).push(k);
             (page.aims[e.seat] ??= {})[k] ??= [e.ax, e.ay];
           }
-          if (e.k === "takeback") page.takenBack.add(`q${e.q}`);
+          if (e.k === "takeback" && e.seat === page.seat) page.takenBack.add(`q${e.q}`);
+          else if (e.k === "takeback") (page.unpictured[e.seat] ??= new Set()).add(`id${e.id}`);
+          if (e.k === "hit") (page.hits[e.seat] ??= []).push(e);
         }
       }
     }
@@ -156,6 +172,7 @@ function deliver(page, msg, room) {
   const before = page.session.sims;
   const was = {};
   for (const [seat, sim] of Object.entries(before ?? {})) was[seat] = [sim, sim.corks];
+  if (msg.name === "end") return page.session.finish(msg.data[0].result);
   for (const fn of page.handlers[msg.name] ?? []) fn(...msg.data);
   if (msg.name !== "snapshot") return;
   const snap = msg.data[0];
@@ -177,8 +194,9 @@ function deliver(page, msg, room) {
 /**
  * Everything wrong with a page's picture of the stalls, against the room (an empty list when it is
  * exact): for every stall it shows, the corks it pictured are the corks the room fired, none twice,
- * each with the room's aim, and the corks left are the room's. A page's own corks are matched by `q`; one it pictured and
- * took back (the room never fired it) is not counted. The only corks it may miss are those it could
+ * each with the room's aim, and the corks left are the room's. A page's own corks are matched by
+ * `q`; one it pictured and took back (the room never fired it) is not counted, and nor is a
+ * watched stall's cork it pictured past the room's end and took back. The only corks it may miss are those it could
  * not have seen (`unseen`).
  */
 export function problems(page, room, seats = room.state.seats.map((s) => s.seat)) {
@@ -189,8 +207,9 @@ export function problems(page, room, seats = room.state.seats.map((s) => s.seat)
     const twice = shown.filter((k, i) => shown.indexOf(k) !== i);
     if (twice.length) out.push(`${name}: pictured twice ${twice.join(" ")}`);
     const fired = new Set((room.fires[seat] ?? []).map((c) => key(page, seat, c)));
-    const kept = new Set(shown.filter((k) => !page.takenBack.has(k) || seat !== page.seat));
-    if (seat === page.seat) for (const k of page.takenBack) if (fired.has(k)) out.push(`${name}: took back ${k}, which the room fired`);
+    const back = seat === page.seat ? page.takenBack : (page.unpictured[seat] ?? new Set());
+    const kept = new Set(shown.filter((k) => !back.has(k)));
+    for (const k of back) if (fired.has(k)) out.push(`${name}: took back ${k}, which the room fired`);
     const unseen = page.unseen[seat] ?? new Set();
     const missing = [...fired].filter((k) => !kept.has(k) && !unseen.has(k));
     const extra = [...kept].filter((k) => !fired.has(k));

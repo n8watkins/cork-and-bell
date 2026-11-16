@@ -336,6 +336,9 @@ export const game = {
       seats: state.seats,
       picks: state.picks,
       ended: state.endAt !== null,
+      ...(state.endAt !== null && { endAt: state.endAt }),
+      // The round is over: the room fires nothing more (a page's picture, behind it, must not either).
+      ...(state.over && { over: true }),
       stalls: state.seats.map((s) => {
         const read = state.heard[s.seat];
         if (read) closeGaps(read, now);
@@ -391,19 +394,23 @@ export function dumpStall(sim, read) {
     queued: sim.queued,
     pending: sim.pending.map((shot) => ({ ...shot })),
     flying: sim.corks.map((c) => ({ ...c, p: c.p.slice(), v: c.v.slice() })),
-    plateDown: sim.plateDown.map(r3),
-    plateUpAt: sim.plateUpAt.map(r3),
+    // Everything that decides what a cork hits is sent exactly too: a stall rebuilt from rounded
+    // times can see a plate up, or a pendulum stunned, where the room's did not, and its corks go
+    // another way from then on. (Only where the corks lie, which decides nothing, is rounded.)
+    plateDown: sim.plateDown,
+    plateUpAt: sim.plateUpAt,
     starLap: sim.starLap,
-    stunUntil: sim.stunUntil.map(r3),
-    shutterHitAt: r3(sim.shutterHitAt),
-    jamUntil: r3(sim.jamUntil),
-    jamAt: r3(sim.jamAt),
-    mothsUntil: r3(sim.mothsUntil),
-    darkUntil: r3(sim.darkUntil),
+    stunUntil: sim.stunUntil,
+    shutterHitAt: sim.shutterHitAt,
+    bellHitAt: sim.bellHitAt,
+    jamUntil: sim.jamUntil,
+    jamAt: sim.jamAt,
+    mothsUntil: sim.mothsUntil,
+    darkUntil: sim.darkUntil,
     rested: sim.rested.map((c) => c.map(r3)),
     // Only the lamps that are out and the prizes that have been knocked: most rounds, nothing.
-    lamps: sim.lampOut.flatMap((until, i) => (until > sim.t ? [[i, r3(until)]] : [])),
-    vases: sim.vaseKnocks.flatMap((n, i) => (n ? [[i, n, r3(sim.vaseDown[i])]] : [])),
+    lamps: sim.lampOut.flatMap((until, i) => (until > sim.t ? [[i, until]] : [])),
+    vases: sim.vaseKnocks.flatMap((n, i) => (n ? [[i, n, sim.vaseDown[i]]] : [])),
     tasks: [sim.taskDone, sim.taskMoons, sim.taskCentres],
   };
 }
@@ -425,6 +432,7 @@ export function loadStall(sim, d) {
   sim.starLap = d.starLap.slice();
   sim.stunUntil = d.stunUntil.slice();
   sim.shutterHitAt = d.shutterHitAt;
+  if (d.bellHitAt !== undefined) sim.bellHitAt = d.bellHitAt;
   sim.jamUntil = d.jamUntil;
   sim.jamAt = d.jamAt;
   sim.mothsUntil = d.mothsUntil;
