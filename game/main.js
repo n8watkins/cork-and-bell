@@ -25,7 +25,7 @@ import { Scores } from "./scores.js";
 import { LocalSession, NetSession } from "./session.js";
 import { ATTACK_NAMES, COUNT_IN, game } from "./shared/battle.js";
 import { COUNTER, TRAY } from "./shared/layout.js";
-import { BELL_FULL, COCK_SECONDS, RICOCHET_TIMES, ROUND_SECONDS, StallSim, TASKS, mech, speedAt } from "./shared/sim.js";
+import { BELL_FULL, COCK_SECONDS, CORKS_PER_ROUND, RICOCHET_TIMES, ROUND_SECONDS, StallSim, TASKS, mech, speedAt } from "./shared/sim.js";
 import { Lens, fourInARow, gridFor } from "./view/render.js";
 import { StallAssets, StallView } from "./view/stall.js";
 
@@ -121,7 +121,7 @@ const scores = new Scores();
 /** The start board names the score to beat, as a cabinet shows its high score while it waits. */
 function showScoreToBeat() {
   const top = scores.rows()[0];
-  $("start-beat").textContent = top ? `90 seconds. To beat: ${top.name} ${top.score}.` : "90 seconds, 70 corks.";
+  $("start-beat").textContent = top ? `90 seconds. To beat: ${top.name} ${top.score}.` : `90 seconds, ${CORKS_PER_ROUND} corks.`;
 }
 
 /** How a stall did, in a line: its aim, its best run, and the challenges it did. */

@@ -73,7 +73,7 @@ Decided before any code, and kept everywhere.
 ## The game
 
 - Point and click (or drag and release on a phone). The cork flies a real arc: it is sighted in for the front row and drops beyond it, so the far row needs a higher aim.
-- The lever takes half a second to cock. Seventy corks a round. A dead-centre hit earns the cork back.
+- The lever takes half a second to cock. Thirty-five corks a round. A dead-centre hit earns the cork back.
 - Front row teapots 10, chain stars 25, pendulum moons 50, the shutter star 100, the bell 15.
 - A run of 4 hits doubles, a run of 8 trebles. A ricochet hit (the cork has already bounced off something) trebles on top of that. Dead centre is worth half as much again.
 - The ticket at the bottom left shows the time and the score, with the run (and what it multiplies by) and the corks left on its stub. It keeps clear of the cork tray on every screen shape.
