@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { game, createBattle, roundTime, dumpStall, loadStall, COUNT_IN, MAX_ROUND_SCORE } from "../game/shared/battle.js";
+import { game, createBattle, cockedFor, roundTime, dumpStall, loadStall, COUNT_IN, MAX_ROUND_SCORE } from "../game/shared/battle.js";
+import { rng } from "./fuzz.js";
 import { StallSim, ROUND_SECONDS, launch, predict, mech, backTop, tasksFor, TASKS, CORKS_PER_ROUND, RICOCHET_TIMES, LAMP_OUT_SECONDS } from "../game/shared/sim.js";
 import { PLATES, ROWS, BELL } from "../game/shared/layout.js";
 
@@ -493,6 +494,89 @@ describe("a player's corks in the room", () => {
     for (let i = 0; i < 10; i++) game.input(state, 0, { f: [2 + i * 0.05, 0, 1.2] }, now);
     for (let i = 0; i < 300; i++) game.tick(state, (now += 10));
     expect(state.stalls[0].shots).toBeLessThanOrEqual(2);
+  });
+
+  it("judges the corks of a page with no lag at all by their stamps, as any other page's", () => {
+    // A page on the same machine or network as the room can stamp a cork in the very millisecond
+    // the room hears it: its least lag is exactly 0, and the stamp is the room's own clock. Such a
+    // cork was once judged by the stall's step instead (1/120 s), and corks fired 0.481 s apart, as
+    // the lever allows, were refused: 21 of 29 counted in 13.6 s. They are judged by their stamps.
+    const seats = [{ seat: 0, name: "Ada", kind: "human" }];
+    const state = game.create({ seed: 5, seats, now: 0, round: 1 });
+    const arrive = [];
+    for (let t = 4000; t <= 4000 + 13600; t += 481) arrive.push(t);
+    let now = 0;
+    let sent = 0;
+    while (now < 20000) {
+      now += 33;
+      while (sent < arrive.length && arrive[sent] <= now) {
+        game.input(state, 0, { f: [roundTime(state, arrive[sent]), 0, 2.6] }, arrive[sent]);
+        sent++;
+      }
+      game.tick(state, now);
+    }
+    expect(arrive.length).toBe(29);
+    expect(state.lag[0]).toBe(0);
+    expect(state.stalls[0].shots).toBe(29);
+  });
+
+  it("keeps only a few corks waiting, so a page cannot swell the snapshots every screen is sent", () => {
+    const seats = Array.from({ length: 4 }, (_, i) => ({ seat: i, name: `P${i}`, kind: "human" }));
+    const state = game.create({ seed: 3, seats, now: 0, round: 1 });
+    let now = 0;
+    for (let i = 0; i < 300; i++) game.tick(state, (now += 33));
+    const quiet = JSON.stringify(game.snapshot(state, now)).length;
+    // Two thousand corks in a third of a second, every one of them stamped as cocked.
+    const relayed = [];
+    for (let k = 0; k < 10; k++) {
+      for (let i = 0; i < 200; i++) game.input(state, 0, { f: [roundTime(state, now) + 0.08, 0, 2.6], q: k * 200 + i + 1 }, now);
+      relayed.push(...game.tick(state, (now += 33)).filter((e) => e.k === "f"));
+    }
+    // One is cocked; the door refuses the rest, and does not relay them.
+    expect(state.stalls[0].pending.length + state.stalls[0].shots).toBe(1);
+    expect(relayed.length).toBe(1);
+    expect(JSON.stringify(game.snapshot(state, now)).length).toBeLessThan(quiet + 2000);
+    // The most that can wait: a page that fired one cork a minute ago, and now sends two thousand
+    // stamped half a second apart since then (as one whose link had stalled all that while would,
+    // and the room would count them). The backstop keeps 64 of them.
+    const later = game.create({ seed: 3, seats, now: 0, round: 1 });
+    let t = 0;
+    for (; t < 4000; t += 33) game.tick(later, t);
+    game.input(later, 1, { f: [roundTime(later, t), 0, 2.6], q: 1 }, t);
+    for (; t < 70000; t += 33) game.tick(later, t);
+    const start = roundTime(later, 4000);
+    for (let i = 0; i < 2000; i++) game.input(later, 1, { f: [start + 0.5 * (i + 1), 0, 2.6], q: i + 2 }, t);
+    expect(later.stalls[1].pending.length).toBe(64);
+    expect(JSON.stringify(game.snapshot(later, t)).length).toBeLessThan(quiet + 12000);
+  });
+
+  it("refuses at the door only corks the stall would refuse when their time comes", () => {
+    // Random stalls with corks waiting (bunched, too close, before the bell, with slack, the stall
+    // nearly out of corks) and a new cork: when the door's rule refuses it, the stall itself,
+    // given the cork, refuses it too.
+    let refused = 0;
+    for (let trial = 0; trial < 400; trial++) {
+      const R = rng(trial + 1);
+      const sim = new StallSim(trial, 0);
+      sim.step(-0.4 + R() * 3);
+      if (R() < 0.3) sim.corksLeft = Math.floor(R() * 3);
+      const t0 = sim.t;
+      for (let i = 0, n = Math.floor(R() * 6); i < n; i++) {
+        const at = t0 + R() * 0.4;
+        sim.fire(at, 0, 2.6, at - R() * 0.6, R() < 0.3 ? R() * 0.15 : 0, i + 1);
+      }
+      if (R() < 0.5) sim.lastWant = t0 - R() * 0.6;
+      const at = t0 + R() * 0.4;
+      const want = at - R() * 0.9;
+      const slack = R() < 0.3 ? R() * 0.15 : 0;
+      if (want - cockedFor(sim, Math.max(at, sim.t)) >= 0.48 - slack) continue;
+      refused += 1;
+      const copy = loadStall(new StallSim(trial, 0), JSON.parse(JSON.stringify(dumpStall(sim))));
+      copy.fire(at, 0, 2.6, want, slack, 999);
+      copy.step(t0 + 2);
+      expect(copy.firedQ).not.toContain(999);
+    }
+    expect(refused).toBeGreaterThan(100);
   });
 
   it("does not let a page fire faster by stamping its corks further apart than it sends them", () => {
