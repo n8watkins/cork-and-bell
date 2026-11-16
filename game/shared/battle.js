@@ -343,9 +343,12 @@ export const game = {
     }
     for (const a of state.attacks) if (a.landed && !a.done && t > a.at + JAM_MAX_SECONDS + 1) a.done = true;
     if (state.endAt === null) {
-      const scoring = state.seats.filter((s) => !state.stalls[s.seat].over).length;
-      const lastOne = state.seats.length > 1 ? scoring <= 1 : scoring === 0;
-      if (t >= ROUND_SECONDS || lastOne) {
+      // The round ends at the time call, or sooner once every stall is out: each has fired its
+      // last cork and seen it come to rest (above), so no cork still in the air is cut off and no
+      // dead-centre hit can still give a cork back. A stall that never fires its corks (an idle
+      // or gone player) is not out, and the round runs to the time call for it.
+      const allOut = state.seats.every((s) => state.stalls[s.seat].over);
+      if (t >= ROUND_SECONDS || allOut) {
         state.endAt = t;
         state.out.push({ k: "time", t });
       }

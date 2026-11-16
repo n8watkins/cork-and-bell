@@ -406,14 +406,97 @@ describe("the battle", () => {
     expect(dumpStall(copy)).toEqual(snap.stalls[0]);
   });
 
-  it("ends early when only one stall still has corks", () => {
-    const seats = [0, 1].map((seat) => ({ seat, name: `P${seat}`, kind: "human" }));
-    const state = game.create({ seed: 9, seats, now: 0, round: 1 });
-    state.stalls[1].corksLeft = 0;
-    let now = 0;
-    while (!game.isOver(state) && now < 20000) game.tick(state, (now += 33));
+});
+
+describe("the end of a round", () => {
+  const humans = (n) => Array.from({ length: n }, (_, i) => ({ seat: i, name: `P${i}`, kind: "human" }));
+  /** A room of `n` human seats, the stalls listed in `empty` with no corks left: [state, at(t)]. */
+  const room = (n, empty, seed = 9) => {
+    const state = game.create({ seed, seats: humans(n), now: 0, round: 1 });
+    state.keep = true;
+    for (const seat of empty) state.stalls[seat].corksLeft = 0;
+    return [state, (t) => (t + COUNT_IN + state.delay) * 1000];
+  };
+  /** Ticks until round time `t` (or the round is over), keeping what the room said. */
+  const run = (state, at, t, out = []) => {
+    for (let now = state.ticked ?? 0; !game.isOver(state) && now < at(t); ) {
+      now += 33;
+      state.ticked = now;
+      out.push(...game.tick(state, now));
+    }
+    return out;
+  };
+
+  it("runs to the time call while any stall still has corks: two stalls, one out", () => {
+    // The player with corks never fires (idle, or gone): the round waits for the time call, as it
+    // does for any idle player.
+    const [state, at] = room(2, [1]);
+    const out = run(state, at, ROUND_SECONDS + 5);
+    expect(out.filter((e) => e.k === "out")).toEqual([{ k: "out", seat: 1, t: expect.any(Number) }]);
+    expect(state.endAt).toBeGreaterThanOrEqual(ROUND_SECONDS);
+    expect(state.stalls[0].over).toBe(false);
     expect(game.isOver(state)).toBe(true);
-    expect(now).toBeLessThan(8000);
+  });
+
+  it("ends early once both stalls are out", () => {
+    const [state, at] = room(2, [0, 1]);
+    const out = run(state, at, 20);
+    expect(out.filter((e) => e.k === "out").map((e) => e.seat)).toEqual([0, 1]);
+    expect(game.isOver(state)).toBe(true);
+    expect(state.endAt).toBeLessThan(1);
+  });
+
+  it("ends a solo round when its one stall is out, as before", () => {
+    const [state, at] = room(1, [0]);
+    run(state, at, 20);
+    expect(game.isOver(state)).toBe(true);
+    expect(state.endAt).toBeLessThan(1);
+  });
+
+  it("four stalls: three out is not the end, the fourth running dry is", () => {
+    const [idle, at] = room(4, [0, 1, 2]);
+    run(idle, at, ROUND_SECONDS + 5);
+    expect(idle.endAt).toBeGreaterThanOrEqual(ROUND_SECONDS);
+    const [dry, at2] = room(4, [0, 1, 2, 3]);
+    run(dry, at2, 20);
+    expect(dry.endAt).toBeLessThan(1);
+    // Four bots run dry one after another (these seeds: the last some 5 to 10 s after the third):
+    // the round ends when the last stall's last cork comes to rest, not at the third.
+    for (const seed of [1, 2, 3, 4]) {
+      const { state, events } = runBattle(seed, 4);
+      const outs = events.filter((e) => e.k === "out").map((e) => e.t);
+      expect(outs).toHaveLength(4);
+      expect(state.endAt).toBe(outs[3]);
+      expect(state.endAt).toBeGreaterThan(outs[2] + 1);
+      expect(state.endAt).toBeLessThan(ROUND_SECONDS);
+    }
+  });
+
+  it("waits for the last cork in the air to land and score, and a cork earned back keeps the round going", () => {
+    // Seat 0 is out. Seat 1 fires its last cork, dead centre on a plate: while it flies the stall
+    // has no corks, but it is not out, and the round goes on. The hit earns the cork back, so the
+    // stall has one again, and the round still goes on.
+    const [state, at] = room(2, [0]);
+    state.stalls[1].corksLeft = 1;
+    run(state, at, 2.6);
+    game.input(state, 1, { f: [2.7, PLATES[0].x, PLATES[0].y] }, at(2.7) - 300);
+    run(state, at, 6);
+    const hit = state.simEvents.find((e) => e.k === "hit" && e.seat === 1);
+    expect(hit).toMatchObject({ perfect: true });
+    expect(state.stalls[1].corksLeft).toBe(1);
+    expect(state.stalls[1].over).toBe(false);
+    expect(state.endAt).toBeNull();
+    // Its last cork again, not earned back this time: the round ends once it has come to rest,
+    // with its hit (if any) counted.
+    game.input(state, 1, { f: [6.1, 1.2, 0.6] }, at(6.1) - 300);
+    const out = run(state, at, 20);
+    expect(state.stalls[1].shots).toBe(2);
+    expect(state.stalls[1].corksLeft).toBe(0);
+    const last = state.simEvents.filter((e) => e.seat === 1 && e.t > 6).map((e) => e.t);
+    expect(state.endAt).toBeGreaterThan(6.1);
+    expect(state.endAt).toBeGreaterThanOrEqual(Math.max(...last));
+    expect(out.filter((e) => e.k === "out")).toEqual([{ k: "out", seat: 1, t: state.endAt }]);
+    expect(state.endAt).toBeLessThan(ROUND_SECONDS);
   });
 });
 

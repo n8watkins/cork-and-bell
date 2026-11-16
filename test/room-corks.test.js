@@ -31,9 +31,11 @@ describe("the room's verdicts", () => {
   // The same rounds give the same verdicts as the room code before corks were numbered (53c44f2):
   // every stall's score, corks fired, hits, corks left and best run, over bot rounds and
   // LocalSession rounds of one to four stalls. The digests were made by running these rounds on
-  // that code with CORKS_PER_ROUND set to this one (35): when the rules change (the corks a round,
-  // say), make them again the same way, from the old room code with the new rule, never from this
-  // code's own output. The full comparison (1,200 rounds of each, and of pages with jittery
+  // that code with CORKS_PER_ROUND set to this one (35) and its round ending only once every
+  // stall is out: when the rules change (the corks a round, say), make them again the same way,
+  // from the old room code with the new rule, never from this code's own output. (That code with
+  // its own early end, once no more than one stall had corks, still gives the digests these
+  // replaced, 5705e43316f7286b and 17604d2e5a97925f.) The full comparison (1,200 rounds of each, and of pages with jittery
   // links) is in pull requests #8 and #9.
   const summary = (seats, stall) =>
     seats
@@ -61,7 +63,7 @@ describe("the room's verdicts", () => {
       return summary(seats, (s) => state.stalls[s]);
     };
     expect(CORKS_PER_ROUND).toBe(35); // the digests are for 35 corks a round
-    expect(digest(bots)).toBe("5705e43316f7286b");
+    expect(digest(bots)).toBe("831ebb17ead17a7e");
   });
 
   it("are main's for the solo stall and the demo (LocalSession)", () => {
@@ -81,7 +83,7 @@ describe("the room's verdicts", () => {
       return summary(seats, (s) => ses.sims[s]);
     };
     expect(CORKS_PER_ROUND).toBe(35); // the digests are for 35 corks a round
-    expect(digest(local)).toBe("17604d2e5a97925f");
+    expect(digest(local)).toBe("afa860511226d4f0");
   });
 
   it("judge the corks of a page with no lag at all by their stamps, as any other page's", () => {
@@ -176,8 +178,8 @@ describe("the room's door", () => {
     // the stall as it was, given the cork as the room would have queued it, refuses too. And a
     // page that only ever fires cocked corks, in order, has every one of its round's corks counted.
     // (Each room has two more seats whose players never fire, so the round runs to the bell: it
-    // ends early when no more than one stall still has corks, and an honest page's last corks
-    // would be refused for the round's end, not by the door.)
+    // ends early only when every stall is out of corks, and an honest page's last corks must not
+    // be refused for the round's end, only by the door.)
     let checked = 0;
     let honestSeats = 0;
     let honestCorks = 0;
@@ -537,13 +539,16 @@ describe("today's page against this room", () => {
   // jittery, freezing, dropping and stalling links: what the player's own page and a watching
   // screen picture of a stall, against what the room fired, must be no worse than against
   // the room before corks were numbered. Its numbers were made by running test/net-room.js's
-  // playRound beside that room's code (53c44f2) with CORKS_PER_ROUND set to this one (35), same
-  // seeds: when the rules change, make them again that way, never from this code's own output.
+  // playRound beside that room's code (53c44f2) with CORKS_PER_ROUND set to this one (35) and the
+  // round ending early only once every stall is out, same seeds: when the rules change, make them
+  // again that way, never from this code's own output. (Under the old early end, once no more than
+  // one stall had corks, the rounds were shorter and fewer of a dropped link's spells fell inside
+  // one: own extra on a dropped link was 10, now 13.)
   const MAIN = {
     clean: { own: [0, 0], watcher: [0, 0, 0] },
     jitter: { own: [0, 0], watcher: [0, 0, 0] },
     frozen: { own: [0, 0], watcher: [0, 0, 0] },
-    dropped: { own: [0, 10], watcher: [1, 0, 0] },
+    dropped: { own: [0, 13], watcher: [1, 0, 0] },
     uplinkStall: { own: [0, 0], watcher: [7, 0, 5] },
   };
   for (const [link, main] of Object.entries(MAIN)) {
@@ -554,7 +559,7 @@ describe("today's page against this room", () => {
         const r = playRound(link, seed);
         expect(r.errors).toEqual([]);
         // A real round: most of a round's corks fired, and most of the ninety seconds played (it
-        // ends when a player runs out; a frozen page fires fewer).
+        // ends when both players are out; a frozen page fires fewer).
         expect(r.counted).toBeGreaterThanOrEqual(CORKS_PER_ROUND * 0.4);
         expect(r.endAt).toBeGreaterThan(ROUND_SECONDS * 0.6);
         sum.own[0] += r.own.missing;
