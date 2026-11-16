@@ -249,7 +249,11 @@ export class StallSim {
    *
    * A `want` that is given is always the one used, also when it equals `at` (a page whose least
    * lag is exactly 0 is judged by its stamps, as every other page is). Without a `want` the cork
-   * is judged by the stall's own time when it fires.
+   * is judged by the stall's own times: when it fires, against when the last cork fired here
+   * (lastFire, as a page's lever is: NetSession.canFire). A room gives every cork a `want`; a page
+   * fires its own corks without one, and its stall can hold the room's corks (rebuilt from a
+   * snapshot, with the room's `want`s): judging the page's next cork against the room's `want`,
+   * which is the page's stamp moved by its lag, would refuse a cork the page let go as cocked.
    *
    * `q` is the page's own number for the cork, when its page numbers them: it goes with the shot,
    * the cork, its "fire" event and `firedQ`. Every shot also gets its place in the stall's line
@@ -279,7 +283,8 @@ export class StallSim {
     const want = shot.want ?? this.t;
     // A room judges by stamps moved by the least lag seen so far, which can fall a little between
     // two corks as the connection settles: that much slack (up to ARRIVAL_SLACK), and no more.
-    if (want - this.lastWant < COCK_SECONDS - 0.02 - (shot.slack ?? 0)) return this.refuse(shot, "cocking");
+    const since = shot.want === undefined ? this.t - this.lastFire : want - this.lastWant;
+    if (since < COCK_SECONDS - 0.02 - (shot.slack ?? 0)) return this.refuse(shot, "cocking");
     if (this.corksLeft <= 0) return this.refuse(shot, "empty");
     this.lastWant = want;
     this.lastFire = this.t;
