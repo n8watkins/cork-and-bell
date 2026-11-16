@@ -222,6 +222,10 @@ export class StallSim {
     this.corks = []; // in flight
     this.rested = []; // where corks came to rest: they stay for the round
     this.pending = []; // fire inputs waiting for their time
+    /** How many corks have been queued so far (fired or not): each one's number (`n`) is its place in that line. */
+    this.queued = 0;
+    /** The page's numbers (`q`) of the corks this stall has fired, in order (corks without one are not in it). */
+    this.firedQ = [];
     this.events = [];
     this.over = false;
   }
@@ -242,19 +246,46 @@ export class StallSim {
    * cocked is judged by the time the page fired it (`want`, which the room bounds), as the page
    * judged it: otherwise uneven delays on the way could put two corks closer together in the room
    * than they were when fired, and the room would drop one the player saw fly.
+   *
+   * A `want` that is given is always the one used, also when it equals `at` (a page whose least
+   * lag is exactly 0 is judged by its stamps, as every other page is). Without a `want` the cork
+   * is judged by the stall's own times: when it fires, against when the last cork fired here
+   * (lastFire, as a page's lever is: NetSession.canFire). A room gives every cork a `want`; a page
+   * fires its own corks without one, and its stall can hold the room's corks (rebuilt from a
+   * snapshot, with the room's `want`s): judging the page's next cork against the room's `want`,
+   * which is the page's stamp moved by its lag, would refuse a cork the page let go as cocked.
+   *
+   * `q` is the page's own number for the cork, when its page numbers them: it goes with the shot,
+   * the cork, its "fire" event and `firedQ`. Every shot also gets its place in the stall's line
+   * (`n`), how a cork with no `q` is known.
    */
-  fire(at, ax, ay, want = at, slack = 0) {
+  fire(at, ax, ay, want, slack = 0, q) {
     if (!Number.isFinite(at) || !Number.isFinite(ax) || !Number.isFinite(ay)) return false;
-    this.pending.push({ at: Math.max(at, this.t), want: Number.isFinite(want) && want !== at ? want : undefined, slack: Math.min(ARRIVAL_SLACK, Math.max(0, slack || 0)), ax: Math.max(-1.6, Math.min(1.6, ax)), ay: Math.max(0.2, Math.min(3, ay)) });
+    this.pending.push({
+      at: Math.max(at, this.t),
+      want: Number.isFinite(want) ? want : undefined,
+      slack: Math.min(ARRIVAL_SLACK, Math.max(0, slack || 0)),
+      ax: Math.max(-1.6, Math.min(1.6, ax)),
+      ay: Math.max(0.2, Math.min(3, ay)),
+      n: this.queued++,
+      ...(q !== undefined && { q }),
+    });
     return true;
   }
 
+  /** A cork this stall will not fire: a room passes the word on to its page (battle.js tick). */
+  refuse(shot, why) {
+    this.events.push({ k: "no", seat: this.seat, n: shot.n, ...(shot.q !== undefined && { q: shot.q }), t: this.t, why });
+  }
+
   doFire(shot) {
-    if (this.t < 0 || this.t >= ROUND_SECONDS || this.over) return;
+    if (this.t < 0 || this.t >= ROUND_SECONDS || this.over) return this.refuse(shot, this.t < 0 ? "early" : "late");
     const want = shot.want ?? this.t;
     // A room judges by stamps moved by the least lag seen so far, which can fall a little between
     // two corks as the connection settles: that much slack (up to ARRIVAL_SLACK), and no more.
-    if (want - this.lastWant < COCK_SECONDS - 0.02 - (shot.slack ?? 0) || this.corksLeft <= 0) return;
+    const since = shot.want === undefined ? this.t - this.lastFire : want - this.lastWant;
+    if (since < COCK_SECONDS - 0.02 - (shot.slack ?? 0)) return this.refuse(shot, "cocking");
+    if (this.corksLeft <= 0) return this.refuse(shot, "empty");
     this.lastWant = want;
     this.lastFire = this.t;
     this.corksLeft -= 1;
@@ -263,8 +294,10 @@ export class StallSim {
     // Each cork has its own small drift and spin: it wanders more the farther it flies.
     const drift = (hash(this.seed, n * 3 + 1) - 0.5) * 1.5;
     const lift = (hash(this.seed, n * 3 + 2) - 0.5) * 0.7;
-    this.corks.push({ id: n, p, v, drift, lift, bounces: 0, struck: 0, born: this.t, age: 0, spin: hash(this.seed, n * 3 + 3), ax: shot.ax, ay: shot.ay });
-    this.events.push({ k: "fire", seat: this.seat, id: n, t: this.t, ax: shot.ax, ay: shot.ay });
+    const q = shot.q !== undefined ? { q: shot.q } : {};
+    if (shot.q !== undefined) this.firedQ.push(shot.q);
+    this.corks.push({ id: n, n: shot.n, p, v, drift, lift, bounces: 0, struck: 0, born: this.t, age: 0, spin: hash(this.seed, n * 3 + 3), ax: shot.ax, ay: shot.ay, ...q });
+    this.events.push({ k: "fire", seat: this.seat, id: n, n: shot.n, t: this.t, ax: shot.ax, ay: shot.ay, ...q });
   }
 
   /** Advances to round time `to`, in fixed steps. Events gather in this.events. */
