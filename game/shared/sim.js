@@ -226,6 +226,10 @@ export class StallSim {
     this.queued = 0;
     /** The page's numbers (`q`) of the corks this stall has fired, in order (corks without one are not in it). */
     this.firedQ = [];
+    /** Corks a player's own page fired with none left by its count (see doFire). Never in a room. */
+    this.owed = 0;
+    /** Corks fired late in this step, to fly the steps since they were due (catchUp). Never in a room. */
+    this.late = [];
     this.events = [];
     this.over = false;
   }
@@ -294,10 +298,15 @@ export class StallSim {
     // A room judges by stamps moved by the least lag seen so far, which can fall a little between
     // two corks as the connection settles: that much slack (up to ARRIVAL_SLACK), and no more.
     if (want - this.lastWant < COCK_SECONDS - 0.02 - (shot.slack ?? 0)) return this.refuse(shot, "cocking");
-    if (this.corksLeft <= 0) return this.refuse(shot, "empty");
+    // The player's own page lets a cork go when its lever is cocked and it has a cork (canFire); by
+    // the time it fires here (after a rebuild, say) the room may have given one back that this
+    // stall has not yet. The room is the judge: the cork flies, owed (the count is never below 0),
+    // and is taken back if the room refuses it (unfire).
+    if (this.corksLeft <= 0 && !shot.cocked) return this.refuse(shot, "empty");
     this.lastWant = want;
     this.lastFire = this.t;
-    this.corksLeft -= 1;
+    if (this.corksLeft > 0) this.corksLeft -= 1;
+    else this.owed += 1;
     const n = this.shots++;
     const { p, v } = launch(shot.ax, shot.ay);
     // Each cork has its own small drift and spin: it wanders more the farther it flies.
@@ -307,19 +316,27 @@ export class StallSim {
     if (shot.q !== undefined) this.firedQ.push(shot.q);
     const c = { id: n, p, v, drift, lift, bounces: 0, struck: 0, born: when, age: 0, spin: hash(this.seed, n * 3 + 3), ax: shot.ax, ay: shot.ay, ...q };
     this.events.push({ k: "fire", seat: this.seat, id: n, n: shot.n, t: this.t, ax: shot.ax, ay: shot.ay, ...q });
-    if (when < this.t) {
-      // Fired late (a screen whose word of the cork came after its time): the cork has flown the
-      // steps since it was due, as the room's did, so it is where the room's is and meets what it met.
-      const now = this.t;
-      let flying = true;
-      for (let k = Math.round((now - when) / DT); k > 0 && flying; k--) {
-        this.t = now - k * DT;
-        flying = this.stepCork(c);
-      }
-      this.t = now;
-      if (!flying) return;
+    // Fired late (a screen whose word of the cork came after its time): it flies the steps since
+    // it was due before this step's own (catchUp), so it is where the room's is.
+    if (when < this.t) this.late.push({ c, when });
+    else this.corks.push(c);
+  }
+
+  /**
+   * The corks fired late in this step fly the steps since they were due, together, step by step
+   * and in the order they were fired, as the room's flew: each meets the stall as the others left
+   * it. (Corks already in the air here flew those steps before: that much may differ.)
+   */
+  catchUp() {
+    const now = this.t;
+    const late = this.late.splice(0);
+    const from = Math.max(...late.map((l) => Math.round((now - l.when) / DT)));
+    for (let k = from; k > 0; k--) {
+      this.t = now - k * DT;
+      for (const l of late) if (!l.done && Math.round((now - l.when) / DT) >= k) l.done = !this.stepCork(l.c);
     }
-    this.corks.push(c);
+    this.t = now;
+    for (const l of late) if (!l.done) this.corks.push(l.c);
   }
 
   /**
@@ -337,7 +354,8 @@ export class StallSim {
     if (k < 0) return false;
     this.firedQ.splice(k, 1);
     this.shots -= 1;
-    this.corksLeft += 1;
+    if (this.owed > 0) this.owed -= 1;
+    else this.corksLeft += 1;
     for (const c of this.corks) if (c.q === q) c.ghost = true;
     return true;
   }
@@ -353,6 +371,7 @@ export class StallSim {
             this.pending.splice(i--, 1);
           }
         }
+        if (this.late.length) this.catchUp();
       }
       // The cam bar lifts the front row, unless a cork is wedged in it.
       const ri = resetIndex(this.t);
@@ -722,7 +741,9 @@ export class StallSim {
     this.score += pts;
     if (hit.target !== "bell") this.bell = Math.min(BELL_FULL, this.bell + (hit.row === 2 ? 2 : 1));
     else if (!hit.rung) this.bell = Math.min(BELL_FULL, this.bell + 1);
-    if (perfect) this.corksLeft = Math.min(CORKS_PER_ROUND, this.corksLeft + 1); // a dead-centre hit earns the cork back
+    // A dead-centre hit earns the cork back (first paying one owed: see doFire).
+    if (perfect && this.owed > 0) this.owed -= 1;
+    else if (perfect) this.corksLeft = Math.min(CORKS_PER_ROUND, this.corksLeft + 1);
     const e = {
       k: "hit", seat: this.seat, id: c.id, t: this.t, target: hit.target, row: hit.row, pts, mult, perfect, ricochet,
       rung: !!hit.rung, streak: this.streak, score: this.score, bell: this.bell, x: hit.x, y: hit.y, z: hit.z, vx: v[0],

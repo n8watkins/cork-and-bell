@@ -13,7 +13,7 @@
 // will not fire a numbered cork, at the door or when its time comes, it says so: {k: "no", seat, q}.
 // So for every cork it sent, a page can tell from any snapshot whether the room fired it, will
 // still judge it, or never will (game/session.js, NetSession.settle).
-import { ARRIVAL_SLACK, BELL_FULL, COCK_SECONDS, JAM_MAX_SECONDS, RICOCHET_TIMES, ROUND_SECONDS, StallSim, TASKS, pendulumBob, predict, resetIndex } from "./sim.js";
+import { ARRIVAL_SLACK, BELL_FULL, COCK_SECONDS, DT, JAM_MAX_SECONDS, RICOCHET_TIMES, ROUND_SECONDS, StallSim, TASKS, pendulumBob, predict, resetIndex } from "./sim.js";
 import { PENDULUMS } from "./layout.js";
 
 export const COUNT_IN = 3;
@@ -103,6 +103,35 @@ function readCork(state, seat, q, now) {
   read.q = q;
   closeGaps(read, now);
   return true;
+}
+
+/**
+ * What a cork due at `at` will be judged cocked against when its time comes: the `want` of the last
+ * cork the stall fires before it. The stall fires its waiting corks step by step, those due at a
+ * step in the order they came (StallSim.step), each if it is cocked (doFire): that is played
+ * through here, for the corks waiting that fire at or before this one's step. A waiting cork is
+ * counted as fired only when it surely will be; one that might be refused for its time or for want
+ * of corks is counted as not (a cork given back meanwhile could let it fire). So this is never
+ * later than the truth, and a cork the door refuses by it the stall would refuse too.
+ */
+export function cockedFor(sim, at) {
+  const stepOf = (a) => Math.max(1, Math.ceil((a - sim.t) / DT - 1e-9));
+  const mine = stepOf(at);
+  const order = sim.pending
+    .map((shot, i) => ({ shot, i, k: stepOf(shot.at) }))
+    .filter((x) => x.k <= mine)
+    .sort((a, b) => a.k - b.k || a.i - b.i);
+  let last = sim.lastWant;
+  let left = sim.corksLeft;
+  for (const { shot, k } of order) {
+    const t = sim.t + k * DT;
+    if (sim.over || t < 0 || t >= ROUND_SECONDS || left <= 0) continue;
+    const want = shot.want ?? t;
+    if (want - last < COCK_SECONDS - 0.02 - (shot.slack ?? 0)) continue;
+    last = want;
+    left -= 1;
+  }
+  return last;
 }
 
 /** How many attacks are on their way to, or at work on, this stall. */
@@ -203,15 +232,11 @@ export const game = {
       const want = Math.min(tNow, stamp + lag);
       // When the least lag has just fallen, the last cork was judged that much late: allow it.
       const slack = Number.isFinite(before) ? Math.max(0, before - lag) : 0;
-      // The door refuses a cork the stall would refuse when its time comes: one not cocked by the
-      // stamps of the corks already fired or waiting, with all the slack a cork can be given. So
-      // what waits is no more than could honestly have been fired, however many corks come at once.
-      // (Exact against the corks fired. Against one still waiting it assumes that cork will fire;
-      // were it refused in its turn, a cork refused here might have been counted. An honest page's
-      // corks are at least 0.48 s apart by their stamps, and this asks 0.33.)
-      let last = sim.lastWant;
-      for (const shot of sim.pending) if (shot.want > last) last = shot.want;
-      if (want < last + COCK_SECONDS - 0.02 - ARRIVAL_SLACK) return no("cocking");
+      // The door refuses a cork the stall will refuse when its time comes, as not cocked: so what
+      // waits is no more than could honestly have been fired, however many corks come at once.
+      // (See cockedFor: it never refuses a cork the stall would have counted.)
+      const shotSlack = Math.min(ARRIVAL_SLACK, slack);
+      if (want - cockedFor(sim, Math.max(at, sim.t)) < COCK_SECONDS - 0.02 - shotSlack) return no("cocking");
       if (sim.pending.length >= MAX_WAITING) return no("full");
       sim.fire(at, data.f[1], data.f[2], want, slack, q);
       // Every screen mirrors this stall from what is relayed here, and the stall has not judged the
@@ -455,6 +480,7 @@ export function loadStall(sim, d) {
   sim.pending = (d.pending ?? []).map((shot) => ({ ...shot }));
   sim.queued = d.queued ?? 0;
   sim.firedQ = fromRanges(d.firedQ ?? []);
+  sim.owed = 0;
   sim.lastReset = resetIndex(d.t);
   return sim;
 }

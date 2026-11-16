@@ -7,8 +7,16 @@ import { COCK_SECONDS, DT, ROUND_SECONDS, StallSim } from "./shared/sim.js";
 
 /** Other players' stalls are shown this far in the past, so their shots arrive before they are due. */
 export const REMOTE_DELAY = 0.45;
+/**
+ * And, for a stall whose word comes later than that (a slow link, or this page's clock ahead of
+ * the room's), up to this much further: a cork fired late meets a stall that has moved on, and can
+ * hit what the room's did not. The stall waits once, and its word then comes in time.
+ */
+const MAX_LATE = 1;
 
 const r3 = (v) => Math.round(v * 1000) / 1000;
+/** Corks left and corks fired together: a stall's corks given back by dead-centre hits, and 70. */
+const givenBack = (sim) => sim.corksLeft - sim.owed + sim.shots;
 
 export class LocalSession {
   /**
@@ -95,8 +103,15 @@ export class NetSession {
     this.ended = false;
     this.over = false;
     this.finalResult = null;
-    this.history = [];
+    /** seat -> [stall time, score, corks given back] each frame: what a stall was when the room's word of it comes. */
+    this.history = {};
+    /** seat -> the room's snapshots of the stall that its picture has not reached yet (judge). */
+    this.waiting = {};
     this.drift = {};
+    /** seat -> how much further in the past than REMOTE_DELAY the stall is shown (MAX_LATE). */
+    this.lateBy = {};
+    /** seat -> the room's latest words of corks of another player's stall ({k: "f"}), for its rebuilds. */
+    this.relayed = {};
     // This page's own corks are known by their number, `q` (1, 2, 3 ... in a round), from end to
     // end (see the top of game/shared/battle.js). Every cork this page sent is open until the
     // room settles it: fired (the room counted it), or never (refused, or never read). The picture
@@ -213,7 +228,13 @@ export class NetSession {
         this.arrived = [];
         this.final = {};
         this.endBy = undefined;
+        this.lateBy = {};
+        this.drift = {};
+        this.relayed = {};
       }
+      // Every stall is rebuilt: what was recorded of them, and the word not judged yet, is of before.
+      this.history = {};
+      this.waiting = {};
       this.sims = {};
       snap.seats.forEach((s, i) => {
         const sim = new StallSim(snap.seed, s.seat);
@@ -245,6 +266,15 @@ export class NetSession {
    */
   load(sim, theirs, known, over = false) {
     loadStall(sim, theirs);
+    // Another player's stall, from a snapshot older than the room's word this screen has read: the
+    // corks relayed since (by their place in the stall's line, not in the snapshot) are fired again.
+    if (sim.seat !== this.mySeat) {
+      for (const e of [...(this.relayed[sim.seat] ?? [])].sort((a, b) => a.n - b.n)) {
+        if (!(e.n >= sim.queued)) continue;
+        sim.queued = e.n;
+        sim.fire(e.at, e.ax, e.ay, e.want, e.slack, e.q, true);
+      }
+    }
     if (sim.seat === this.mySeat) {
       this.numbered = Array.isArray(theirs.firedQ);
       if (this.numbered) {
@@ -286,7 +316,7 @@ export class NetSession {
   }
 
   seatTime(seat) {
-    return this.time() - (seat === this.mySeat ? 0 : REMOTE_DELAY);
+    return this.time() - (seat === this.mySeat ? 0 : REMOTE_DELAY + (this.lateBy[seat] ?? 0));
   }
 
   canFire() {
@@ -324,14 +354,30 @@ export class NetSession {
 
   advance() {
     const out = this.arrived.splice(0);
+    // A page that has not drawn for a while (a frozen or hidden tab) reads its word late.
+    const now = this.time();
+    const held = now - (this.lastFrame ?? now) > 0.25;
+    this.lastFrame = now;
+    const raise = {};
     for (const e of this.queue.splice(0)) {
       if (e.k === "f") {
         const sim = this.sims[e.seat];
         // Our own corks flew when we fired them. And a stall rebuilt from a snapshot has every
         // cork the room had queued by then (fired, or waiting): one relayed before the snapshot
         // and read after it must not fly twice.
-        if (!sim || e.seat === this.mySeat || e.n < sim.queued) continue;
+        if (!sim || e.seat === this.mySeat) continue;
+        // Kept a while: a stall rebuilt from an older snapshot fires again the corks relayed since.
+        const log = (this.relayed[e.seat] ??= []);
+        log.push(e);
+        if (log.length > 64) log.shift();
+        if (e.n < sim.queued) continue;
         if (e.n !== undefined) sim.queued = e.n;
+        // The word came after the cork's time here: the stall is shown that much further in the
+        // past from now on (see MAX_LATE). Not for a page that was itself held up (a frozen tab):
+        // its word came on time, it read it late.
+        // (After this frame: the cork itself flies now, caught up.)
+        const late = sim.t - e.at;
+        if (late > 0 && !held) raise[e.seat] = Math.max(raise[e.seat] ?? 0, late + 0.02);
         // The room's own `want` and `slack`: this stall comes to the room's verdict on the cork,
         // however late it got here and however many came with it.
         sim.fire(e.at, e.ax, e.ay, e.want, e.slack, e.q, true);
@@ -400,16 +446,52 @@ export class NetSession {
         out.push(e);
       }
       sim.events.length = 0;
+      const past = (this.history[s.seat] ??= []);
+      past.push([sim.t, sim.score, givenBack(sim)]);
+      if (past.length > 240) past.shift();
+      this.judge(s.seat);
     }
-    const mine = this.sims[this.mySeat];
-    if (mine) {
-      this.history.push([mine.t, mine.score]);
-      if (this.history.length > 240) this.history.shift();
-    }
+    for (const [seat, by] of Object.entries(raise)) this.lateBy[seat] = Math.min(MAX_LATE, (this.lateBy[seat] ?? 0) + by);
     return out;
   }
 
-  /** The room's periodic word. A stall that has drifted from it for two seconds running is rebuilt from it. */
+  /**
+   * Compares a stall with the room's snapshots of it once its picture has reached the snapshot's
+   * moment (our own stall, ahead of the room, already has; another's, behind it, gets there
+   * later). A stall is wrong when its score is not the room's, or it has given back other corks
+   * than the room's (dead-centre hits: corks left and corks fired, together), so that it would
+   * refuse a cork as the last, or fire one more, where the room did not. Wrong for two seconds
+   * running (four snapshots), it is rebuilt from the room's.
+   */
+  judge(seat) {
+    const waiting = this.waiting[seat] ?? [];
+    const past = this.history[seat] ?? [];
+    while (waiting.length) {
+      const theirs = waiting[0];
+      const then = past.find((h) => h[0] >= theirs.t - 1e-9);
+      if (!then) {
+        // Not there yet; or the picture's record does not go back so far (it was rebuilt since).
+        if (past.length && past[0][0] > theirs.t) waiting.shift();
+        else return;
+        continue;
+      }
+      waiting.shift();
+      const wrong = then[1] !== theirs.score || then[2] !== theirs.corks + theirs.shots;
+      this.drift[seat] = wrong ? (this.drift[seat] ?? 0) + 1 : 0;
+      if (this.drift[seat] < 4) continue;
+      // Rebuilt from the word judged, a moment this screen's picture has passed; the corks relayed
+      // since are fired again (load), and the picture goes on from there.
+      this.load(this.sims[seat], theirs, true);
+      this.drift[seat] = 0;
+      this.rebuilt = true;
+      // What was recorded since, and the word of moments before, are of the stall that was wrong.
+      waiting.length = 0;
+      this.history[seat] = [];
+      return;
+    }
+  }
+
+  /** The room's periodic word. A stall that has drifted from it for two seconds running is rebuilt from it (judge). */
   check(snap) {
     if (snap.round !== this.round || snap.startAt !== this.startAt) return this.adopt(snap, true);
     if (snap.ended) this.ended = true;
@@ -426,22 +508,8 @@ export class NetSession {
         this.final[s.seat] ??= { stall: theirs, done: false };
         return;
       }
-      let mineScore = sim.score;
-      if (s.seat === this.mySeat) {
-        // Our own stall runs ahead of the room: compare with where we were at the room's time.
-        const past = this.history.find((h) => h[0] >= theirs.t);
-        if (past) mineScore = past[1];
-      } else if (Math.abs(sim.t - theirs.t) > 0.3) return;
-      // Another player's stall is wrong too when it has given back other corks than the room's
-      // (dead-centre hits): it would refuse a cork as the last, or fire one more, where the room did not.
-      const given = (x) => x.corksLeft + x.shots;
-      const wrong = mineScore !== theirs.score || (s.seat !== this.mySeat && given(sim) !== theirs.corks + theirs.shots);
-      this.drift[s.seat] = wrong ? (this.drift[s.seat] ?? 0) + 1 : 0;
-      if (this.drift[s.seat] >= 4) {
-        this.load(sim, theirs, true);
-        this.drift[s.seat] = 0;
-        this.rebuilt = true;
-      }
+      (this.waiting[s.seat] ??= []).push(theirs);
+      this.judge(s.seat);
     });
   }
 
