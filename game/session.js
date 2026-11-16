@@ -2,7 +2,7 @@
 // way inputs leave. LocalSession runs the battle code in the page (solo stall, attract mode,
 // the four-stall demo). NetSession follows a room: it sends inputs, mirrors the room's
 // simulation for an instant picture, and takes the room's word for everything that matters.
-import { COUNT_IN, createBattle, END_HOLD, fromRanges, game, landAttacks, loadStall, roundTime, standings, WARNING } from "./shared/battle.js";
+import { COUNT_IN, createBattle, END_HOLD, fromRanges, game, landAttacks, loadStall, roundTime, SIM_DELAY, standings, WARNING } from "./shared/battle.js";
 import { COCK_SECONDS, DT, ROUND_SECONDS, StallSim } from "./shared/sim.js";
 
 /** Other players' stalls are shown this far in the past, so their shots arrive before they are due. */
@@ -112,6 +112,8 @@ export class NetSession {
     this.lateBy = {};
     /** seat -> the room's latest words of corks of another player's stall ({k: "f"}), for its rebuilds. */
     this.relayed = {};
+    /** seat -> of another player's stall, the place in the line (`n`) -> number of each cork pictured. */
+    this.seenN = {};
     // This page's own corks are known by their number, `q` (1, 2, 3 ... in a round), from end to
     // end (see the top of game/shared/battle.js). Every cork this page sent is open until the
     // room settles it: fired (the room counted it), or never (refused, or never read). The picture
@@ -122,6 +124,8 @@ export class NetSession {
     this.open = new Map();
     /** The numbers of this page's own corks this screen has pictured leaving its stall. */
     this.shownQ = new Set();
+    /** Of our stall's corks with no `q` (a stand-in bot's), the places in the room's line pictured (firstSight). */
+    this.shownN = new Set();
     /** Whether the room numbers corks (newer room code than some pages): its snapshots then say what became of each. */
     this.numbered = false;
     /** The stamp of this page's last cork. The room judges whether a cork was cocked by these. */
@@ -207,8 +211,15 @@ export class NetSession {
    */
   never(sim, q) {
     this.open.delete(q);
-    sim?.unfire(q);
+    sim?.unfire({ q });
     if (this.shownQ.has(q)) this.arrived.push({ k: "takeback", seat: this.mySeat, q, t: sim?.t });
+  }
+
+  /** A cork with no `q` of our stall (a stand-in bot's) that the room had waiting and then refused. */
+  refusedKept(n) {
+    const sim = this.sims[this.mySeat];
+    const was = sim?.unfire({ n });
+    if (was?.id !== undefined && this.shownN.has(n)) this.arrived.push({ k: "takeback", seat: this.mySeat, id: was.id, n, t: sim.t });
   }
 
   adopt(snap, rebuild) {
@@ -223,6 +234,7 @@ export class NetSession {
         this.q = 0;
         this.open.clear();
         this.shownQ.clear();
+        this.shownN.clear();
         this.lastStamp = -10;
         this.pictured = {};
         this.arrived = [];
@@ -231,15 +243,21 @@ export class NetSession {
         this.lateBy = {};
         this.drift = {};
         this.relayed = {};
+        this.seenN = {};
       }
       // Every stall is rebuilt: what was recorded of them, and the word not judged yet, is of before.
       this.history = {};
       this.waiting = {};
+      this.judged = {};
       this.sims = {};
+      // The room's stalls step from here, and so do these: the same steps, to the last bit.
+      const origin = -COUNT_IN - (snap.delay ?? SIM_DELAY);
       snap.seats.forEach((s, i) => {
         const sim = new StallSim(snap.seed, s.seat);
+        sim.origin = origin;
+        this.judged[s.seat] = snap.stalls[i];
         if (snap.t > -COUNT_IN + 0.2) this.load(sim, snap.stalls[i], !!before[s.seat], !!snap.over);
-        else sim.t = -COUNT_IN - 1;
+        else sim.t = origin;
         this.sims[s.seat] = sim;
         if (snap.over) {
           this.final[s.seat] = { stall: snap.stalls[i], done: true };
@@ -277,6 +295,9 @@ export class NetSession {
     }
     if (sim.seat === this.mySeat) {
       this.numbered = Array.isArray(theirs.firedQ);
+      // The corks the room had waiting are the room's to judge: they fly here (StallSim.doFire,
+      // `kept`), and one the room refuses is taken back (refusedKept, and settle for ours).
+      for (const shot of sim.pending) shot.kept = true;
       if (this.numbered) {
         // A page that has just come back to the round (a reload) numbers on from the room's.
         this.q = Math.max(this.q, theirs.heard ?? 0);
@@ -300,15 +321,54 @@ export class NetSession {
     // The snapshot's corks in the air that this screen never saw leave (the room's word of them
     // was still on its way, or still unread): it is told of them now.
     for (const c of sim.corks) {
-      if (sim.seat === this.mySeat && c.q !== undefined) {
-        if (this.shownQ.has(c.q)) continue;
-        this.shownQ.add(c.q);
-      } else {
-        if (c.id < (this.pictured[sim.seat] ?? 0)) continue;
-        this.pictured[sim.seat] = c.id + 1;
-      }
-      this.arrived.push({ k: "fire", seat: sim.seat, id: c.id, t: c.born, ax: c.ax, ay: c.ay, ...(c.q !== undefined && { q: c.q }) });
+      const e = { k: "fire", seat: sim.seat, id: c.id, n: c.n, t: c.born, ax: c.ax, ay: c.ay, ...(c.q !== undefined && { q: c.q }) };
+      if (this.firstSight(sim.seat, e)) this.arrived.push(e);
     }
+  }
+
+  /**
+   * Whether a cork leaving a stall is news to this screen, which then notes it: a rebuilt stall
+   * fires again corks this screen has pictured. Our own are known by their `q`; one of our stall's
+   * with none (a stand-in bot's) by its place in the room's line, `n`, since our own corks number
+   * our stall differently from the room's; any other stall's by its number in the stall. (In a
+   * room that numbers nothing a rebuilt stall's corks carry no `q`: there, ours go by number too.)
+   */
+  firstSight(seat, e) {
+    if (seat === this.mySeat && e.q !== undefined) {
+      if (this.shownQ.has(e.q)) return false;
+      this.shownQ.add(e.q);
+      if (!this.numbered) this.pictured[seat] = Math.max(this.pictured[seat] ?? 0, e.id + 1);
+      return true;
+    }
+    if (seat === this.mySeat && this.numbered && e.n !== undefined) {
+      if (this.shownN.has(e.n)) return false;
+      this.shownN.add(e.n);
+      return true;
+    }
+    if (e.id < (this.pictured[seat] ?? 0)) return false;
+    this.pictured[seat] = e.id + 1;
+    if (seat !== this.mySeat && e.n !== undefined) (this.seenN[seat] ??= new Map()).set(e.n, e.id);
+    return true;
+  }
+
+  /**
+   * The room refused a cork of another player's stall that this screen's copy fired: the copy went
+   * another way (its word of two corks came late, and in another order than the room fires them).
+   * The cork is taken back, and the stall rebuilt from the last snapshot its picture had passed,
+   * with the corks relayed since fired again in the room's order (load).
+   */
+  refusedThere(seat, n) {
+    const id = this.seenN[seat]?.get(n);
+    const sim = this.sims[seat];
+    const from = this.judged[seat];
+    if (id === undefined || !sim || !from || this.final[seat]) return;
+    this.seenN[seat].delete(n);
+    this.arrived.push({ k: "takeback", seat, id, t: sim.t });
+    this.pictured[seat] = Math.min(this.pictured[seat] ?? 0, id);
+    this.load(sim, from, true);
+    this.waiting[seat] = [];
+    this.history[seat] = [];
+    this.rebuilt = true;
   }
 
   time() {
@@ -384,7 +444,9 @@ export class NetSession {
         continue;
       }
       if (e.k === "no") {
-        if (e.seat === this.mySeat) this.refused(e.q);
+        if (e.seat === this.mySeat && e.q !== undefined) this.refused(e.q);
+        else if (e.seat === this.mySeat) this.refusedKept(e.n);
+        else this.refusedThere(e.seat, e.n);
         continue;
       }
       if (e.k === "atk") {
@@ -423,16 +485,7 @@ export class NetSession {
         // fires again that this screen has pictured is not shown twice. Our own by its `q`; any
         // other by its number in the stall. (In a room that numbers nothing, the rebuilt stall's
         // corks carry no `q`, so ours count towards the number too.)
-        if (e.k === "fire") {
-          if (s.seat === this.mySeat && e.q !== undefined) {
-            if (this.shownQ.has(e.q)) continue;
-            this.shownQ.add(e.q);
-            if (!this.numbered) this.pictured[s.seat] = Math.max(this.pictured[s.seat] ?? 0, e.id + 1);
-          } else {
-            if (e.id < (this.pictured[s.seat] ?? 0)) continue;
-            this.pictured[s.seat] = e.id + 1;
-          }
-        }
+        if (e.k === "fire" && !this.firstSight(s.seat, e)) continue;
         // A screen's own stall says what it would not fire; what counts is what the room says.
         if (e.k === "no") continue;
         // A dead-centre hit inside a warning is a block: show it now, the room will confirm it.
@@ -476,6 +529,7 @@ export class NetSession {
         continue;
       }
       waiting.shift();
+      this.judged[seat] = theirs;
       const wrong = then[1] !== theirs.score || then[2] !== theirs.corks + theirs.shots;
       this.drift[seat] = wrong ? (this.drift[seat] ?? 0) + 1 : 0;
       if (this.drift[seat] < 4) continue;

@@ -127,7 +127,7 @@ export function makeRoom({ seed = 7, seats = SEATS, standIn = false, oldRoom = f
         for (const seat of bots) for (const d of game.bot(room.state, seat, room.now)) game.input(room.state, seat, d, room.now);
         const events = game.tick(room.state, room.now);
         for (const e of room.state.simEvents.splice(0)) {
-          if (e.k === "fire") (room.fires[e.seat] ??= []).push({ id: e.id, q: e.q, aim: [e.ax, e.ay], t: e.t, at: room.now });
+          if (e.k === "fire") (room.fires[e.seat] ??= []).push({ id: e.id, n: e.n, q: e.q, aim: [e.ax, e.ay], t: e.t, at: room.now });
           if (e.k === "hit") (room.hits[e.seat] ??= []).push(e);
         }
         if (events.length) room.send("events", events);
@@ -146,10 +146,10 @@ export function makeRoom({ seed = 7, seats = SEATS, standIn = false, oldRoom = f
             (page.fired[e.seat] ??= []).push(e.id);
             const k = key(page, e.seat, e);
             (page.shown[e.seat] ??= []).push(k);
-            (page.aims[e.seat] ??= {})[k] ??= [e.ax, e.ay];
+            (page.aims[e.seat] ??= {})[k] = [e.ax, e.ay];
           }
-          if (e.k === "takeback" && e.seat === page.seat) page.takenBack.add(`q${e.q}`);
-          else if (e.k === "takeback") (page.unpictured[e.seat] ??= new Set()).add(`id${e.id}`);
+          if (e.k === "takeback" && e.seat === page.seat) page.takenBack.add(key(page, e.seat, e));
+          if (e.k === "takeback") (page.unpictured[e.seat] ??= []).push(key(page, e.seat, e));
           if (e.k === "hit") (page.hits[e.seat] ??= []).push(e);
         }
       }
@@ -158,9 +158,15 @@ export function makeRoom({ seed = 7, seats = SEATS, standIn = false, oldRoom = f
   return room;
 }
 
-/** How a cork is known: a page's own corks by their number `q`, any other by its number in the stall. */
+/**
+ * How a cork is known: a page's own corks by their number `q`, a cork of its own stall with none
+ * (a stand-in bot's) by its place in the room's line `n`, any other by its number in the stall
+ * (and so are all of its own in a room that numbers nothing).
+ */
 function key(page, seat, c) {
-  return seat === page.seat && c.q !== undefined ? `q${c.q}` : `id${c.id}`;
+  if (seat !== page.seat) return `id${c.id}`;
+  if (c.q !== undefined) return `q${c.q}`;
+  return page.session.numbered ? `n${c.n}` : `id${c.id}`;
 }
 
 /**
@@ -203,13 +209,16 @@ export function problems(page, room, seats = room.state.seats.map((s) => s.seat)
   const out = [];
   for (const seat of seats) {
     const name = `${seat === page.seat ? "own" : "watched"} stall ${seat}`;
-    const shown = page.shown[seat] ?? [];
-    const twice = shown.filter((k, i) => shown.indexOf(k) !== i);
+    // What is left pictured: each cork as often as it was shown, less as often as it was taken back
+    // (a cork taken back and then pictured again, as the room's, is pictured once).
+    const count = new Map();
+    for (const k of page.shown[seat] ?? []) count.set(k, (count.get(k) ?? 0) + 1);
+    for (const k of page.unpictured[seat] ?? []) count.set(k, (count.get(k) ?? 0) - 1);
+    const twice = [...count].filter(([, c]) => c > 1).map(([k]) => k);
     if (twice.length) out.push(`${name}: pictured twice ${twice.join(" ")}`);
     const fired = new Set((room.fires[seat] ?? []).map((c) => key(page, seat, c)));
-    const back = seat === page.seat ? page.takenBack : (page.unpictured[seat] ?? new Set());
-    const kept = new Set(shown.filter((k) => !back.has(k)));
-    for (const k of back) if (fired.has(k)) out.push(`${name}: took back ${k}, which the room fired`);
+    const kept = new Set([...count].filter(([, c]) => c > 0).map(([k]) => k));
+    for (const [k, c] of count) if (c < 0) out.push(`${name}: took back ${k} more often than it pictured it`);
     const unseen = page.unseen[seat] ?? new Set();
     const missing = [...fired].filter((k) => !kept.has(k) && !unseen.has(k));
     const extra = [...kept].filter((k) => !fired.has(k));

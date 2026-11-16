@@ -6,6 +6,8 @@
 import { BACK, BELL, CHAIN, CHALK_BOARD, COUNTER, DRIVE, HALF_W, JAM, LAMPS, PENDULUMS, PENDULUM_RATE, PLATES, ROWS, SHUTTER, STEPS, STEP_LEFT, VASES, WALL_TOP, muzzle } from "./layout.js";
 
 export const DT = 1 / 120;
+/** "origin:x" -> the last step before x of a stall stepping from origin (StallSim.stepBefore). */
+const GRID = new Map();
 export const ROUND_SECONDS = 90;
 export const COCK_SECONDS = 0.5;
 /** The most closer than the cocking time two corks may be judged in a room, when its idea of a player's lag has just fallen (see doFire). */
@@ -230,6 +232,8 @@ export class StallSim {
     this.owed = 0;
     /** Corks fired late in this step, to fly the steps since they were due (catchUp). Never in a room. */
     this.late = [];
+    /** The room's `n` of the `kept` corks without a `q` this stall fired (see doFire). Never in a room. */
+    this.keptFired = [];
     this.events = [];
     this.over = false;
   }
@@ -284,26 +288,55 @@ export class StallSim {
     this.pending.push({ ...rest, ...(q !== undefined && { q }), n: this.queued++, at: Math.max(shot.at, this.t), ax: Math.max(-1.6, Math.min(1.6, shot.ax)), ay: Math.max(0.2, Math.min(3, shot.ay)) });
   }
 
-  /** A numbered cork this stall will not fire: a room tells the cork's page (battle.js tick). */
+  /**
+   * A cork this stall will not fire: a room says so (battle.js tick), naming it by its place in the
+   * stall's line (`n`) and, for a page's numbered cork, its `q`.
+   */
   refuse(shot, why) {
-    if (shot.q !== undefined) this.events.push({ k: "no", seat: this.seat, q: shot.q, t: this.t, why });
+    this.events.push({ k: "no", seat: this.seat, n: shot.n, ...(shot.q !== undefined && { q: shot.q }), t: this.t, why });
+  }
+
+  /**
+   * The last step before time `x` of a stall that steps from `origin` (a room's stalls step from
+   * -COUNT_IN less its delay, by DT, adding up the same numbers every time).
+   */
+  stepBefore(x) {
+    const key = `${this.origin}:${x}`;
+    if (!GRID.has(key)) {
+      let t = this.origin;
+      let last = -Infinity;
+      while (t < x) {
+        last = t;
+        t += DT;
+      }
+      GRID.set(key, last);
+    }
+    return GRID.get(key);
   }
 
   doFire(shot) {
     // The step the cork was due at, when it is fired late (see fire): the first step at or after it
     // (never before it, as a room fires a cork only at a step at or after its time).
     const when = shot.due !== undefined && shot.due < this.t ? Math.max(shot.due, this.t - Math.floor((this.t - shot.due) / DT + 1e-9) * DT) : this.t;
-    if (when < 0 || when >= ROUND_SECONDS || this.over) return this.refuse(shot, when < 0 ? "early" : "late");
+    // A mirrored cork is before the bell when the room's first step at or after it is (and after
+    // time likewise): known exactly from the room's steps, where `origin` is.
+    const exact = shot.due !== undefined && this.origin !== undefined;
+    const early = exact ? shot.due <= this.stepBefore(0) : when < 0;
+    const late = exact ? shot.due > this.stepBefore(ROUND_SECONDS) : when >= ROUND_SECONDS;
+    if (early || late || this.over) return this.refuse(shot, early ? "early" : "late");
     const want = shot.cocked ? Math.max(this.t, this.lastWant + COCK_SECONDS) : (shot.want ?? this.t);
     // A room judges by stamps moved by the least lag seen so far, which can fall a little between
     // two corks as the connection settles: that much slack (up to ARRIVAL_SLACK), and no more.
-    if (want - this.lastWant < COCK_SECONDS - 0.02 - (shot.slack ?? 0)) return this.refuse(shot, "cocking");
+    // (A cork `kept` is one a room had waiting when the player's own stall was rebuilt from it: the
+    // room judges it against its own corks, not the ones the page has let go since, which it may
+    // yet refuse. It flies, and is taken back if the room refuses it. Never in a room.)
+    if (!shot.kept && want - this.lastWant < COCK_SECONDS - 0.02 - (shot.slack ?? 0)) return this.refuse(shot, "cocking");
     // The player's own page lets a cork go when its lever is cocked and it has a cork (canFire); by
     // the time it fires here (after a rebuild, say) the room may have given one back that this
     // stall has not yet. The room is the judge: the cork flies, owed (the count is never below 0),
     // and is taken back if the room refuses it (unfire).
-    if (this.corksLeft <= 0 && !shot.cocked) return this.refuse(shot, "empty");
-    this.lastWant = want;
+    if (this.corksLeft <= 0 && !shot.cocked && !shot.kept) return this.refuse(shot, "empty");
+    this.lastWant = Math.max(this.lastWant, want);
     this.lastFire = this.t;
     if (this.corksLeft > 0) this.corksLeft -= 1;
     else this.owed += 1;
@@ -314,7 +347,9 @@ export class StallSim {
     const lift = (hash(this.seed, n * 3 + 2) - 0.5) * 0.7;
     const q = shot.q !== undefined ? { q: shot.q } : {};
     if (shot.q !== undefined) this.firedQ.push(shot.q);
-    const c = { id: n, p, v, drift, lift, bounces: 0, struck: 0, born: when, age: 0, spin: hash(this.seed, n * 3 + 3), ax: shot.ax, ay: shot.ay, ...q };
+    else if (shot.kept) this.keptFired.push(shot.n);
+    // A cork also carries its place in the stall's line (`n`), how a cork with no `q` is known.
+    const c = { id: n, n: shot.n, p, v, drift, lift, bounces: 0, struck: 0, born: when, age: 0, spin: hash(this.seed, n * 3 + 3), ax: shot.ax, ay: shot.ay, ...q };
     this.events.push({ k: "fire", seat: this.seat, id: n, n: shot.n, t: this.t, ax: shot.ax, ay: shot.ay, ...q });
     // Fired late (a screen whose word of the cork came after its time): it flies the steps since
     // it was due before this step's own (catchUp), so it is where the room's is.
@@ -342,22 +377,27 @@ export class StallSim {
   /**
    * Takes back a cork this stall fired that never was (a page's picture of a cork its room refused,
    * or never heard): it is not counted, the cork is given back, and if it is still in the air it
-   * flies on as a ghost that touches nothing and leaves nothing behind. True when it was here.
+   * flies on as a ghost that touches nothing and leaves nothing behind. Known by its `q`, or (a
+   * `kept` cork with none) by its place in the room's line, `n`. Null when it is not here; the
+   * cork's number in this stall when it had fired.
    */
-  unfire(q) {
-    const i = this.pending.findIndex((shot) => shot.q === q);
+  unfire({ q, n }) {
+    const same = q !== undefined ? (x) => x.q === q : (x) => x.kept && x.n === n;
+    const i = this.pending.findIndex(same);
     if (i >= 0) {
       this.pending.splice(i, 1);
-      return true;
+      return {};
     }
-    const k = this.firedQ.indexOf(q);
-    if (k < 0) return false;
-    this.firedQ.splice(k, 1);
+    const list = q !== undefined ? this.firedQ : this.keptFired;
+    const k = list.indexOf(q !== undefined ? q : n);
+    if (k < 0) return null;
+    list.splice(k, 1);
     this.shots -= 1;
     if (this.owed > 0) this.owed -= 1;
     else this.corksLeft += 1;
-    for (const c of this.corks) if (c.q === q) c.ghost = true;
-    return true;
+    const c = this.corks.find((x) => (q !== undefined ? x.q === q : x.q === undefined && x.n === n));
+    if (c) c.ghost = true;
+    return { id: c?.id };
   }
 
   /** Advances to round time `to`, in fixed steps. Events gather in this.events. */

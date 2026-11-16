@@ -481,6 +481,7 @@ export function loadStall(sim, d) {
   sim.queued = d.queued ?? 0;
   sim.firedQ = fromRanges(d.firedQ ?? []);
   sim.owed = 0;
+  sim.keptFired = [];
   sim.lastReset = resetIndex(d.t);
   return sim;
 }

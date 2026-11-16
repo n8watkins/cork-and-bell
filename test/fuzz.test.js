@@ -25,6 +25,18 @@ const FOUND = [
   [285, "the same"],
   [306, "the same"],
   [387, "the same"],
+  [925, "two late corks caught up one after the other, not together"],
+  [1102, "a late cork met a stall that had moved on (now shown further in the past instead)"],
+  [2303, "the same"],
+  [1600, "the player's own stall refused its cork as the last, where the room had given one back"],
+  [84, "a stand-in bot's cork waiting at a reconnect, refused here against the player's next cork"],
+  [1034, "the same, and a stand-in cork known by its number in a stall the page numbers differently"],
+  [1548, "the same"],
+  [1666, "the same"],
+  [1821, "the same"],
+  [2179, "the same"],
+  [2106, "a watcher heard two corks late and in another order than the room fired them"],
+  [2327, "a cork due a hair before the bell: the page stepped on other times than the room"],
 ];
 
 describe("every page's picture of every stall, in random rounds", () => {
