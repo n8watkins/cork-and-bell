@@ -38,7 +38,7 @@ const host = findHost(new URLSearchParams(location.search));
 // In a party room the switches are the ones the room hands over (cork-auto and the rest, and only
 // where its test games are on: party-view.js), never this frame's own address.
 const params = host ? new URLSearchParams(typeof host.switches === "string" ? host.switches : "") : new URLSearchParams(location.search);
-const num =(k, d) => (params.has(k) && Number.isFinite(Number(params.get(k))) ? Number(params.get(k)) : d);
+const num = (k, d) => (params.has(k) && Number.isFinite(Number(params.get(k))) ? Number(params.get(k)) : d);
 const P = {
   auto: params.get("auto") === "1",
   seed: num("seed", null),
@@ -78,7 +78,7 @@ const quality = P.quality ?? (coarse || Math.min(innerWidth, innerHeight) < 500 
 
 const sound = new Sound();
 const lens = new Lens($("stage"), { quality });
-const party =host ? new HostedParty(host) : new PartyClient({ lag: P.lag });
+const party = host ? new HostedParty(host) : new PartyClient({ lag: P.lag });
 /** Set when the host takes the page away: the frame loop stops and nothing more is drawn. */
 let disposed = false;
 if (host) {
@@ -906,7 +906,7 @@ function hudFrame(t) {
     if (wall > bannerUntil) $("banner").hidden = true;
   }
   const ret = $("reticle");
-  const show = pointer.seen && session.mySeat >= 0 && !auto &&(mode === "solo" || mode === "battle") && endShownAt === null && lobby.root.hidden && (!pointer.touch || pointer.down);
+  const show = pointer.seen && session.mySeat >= 0 && !auto && (mode === "solo" || mode === "battle") && endShownAt === null && lobby.root.hidden && (!pointer.touch || pointer.down);
   ret.classList.toggle("on", show);
   if (show) {
     const lift = touchLift();
@@ -1058,7 +1058,7 @@ function frame(now) {
       const v = views[i];
       const sim = session.sims[v.seat];
       const t = session.seatTime(v.seat);
-      const human = v.seat === session.mySeat && !auto &&mode !== "attract" && mode !== "four";
+      const human = v.seat === session.mySeat && !auto && mode !== "attract" && mode !== "four";
       if (human) {
         const aim = aimFromPointer();
         if (aim && pointer.seen && (!pointer.touch || pointer.down)) v.view.setAim(aim[0], aim[1]);
@@ -1118,12 +1118,12 @@ onEvent = function (e) {
 
 async function main() {
   lens.resize(innerWidth, innerHeight, devicePixelRatio || 1);
+  // The board's ticket for the first real run, asked for while the stall loads: ready before anyone can take the gun.
+  if (!host && !practice) scores.fetchRun();
   await load();
   if (disposed) return; // the host took the page away while the lamps were being lit
   $("loading").classList.add("gone");
   if (host) return mainHosted();
-  // The board's ticket for the first real run, ready before anyone takes the gun.
-  if (!practice) scores.fetchRun();
   if (P.view === "four") startLocal("four");
   else startLocal(P.auto || !P.state || P.state === "end" || P.state === "last" ? "attract" : "solo", { countIn: P.state ? 0 : 1 });
   if (P.state === "last") session.advance(72 + session.time() * -1);
