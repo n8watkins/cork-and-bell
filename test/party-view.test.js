@@ -4,7 +4,7 @@
 import { existsSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { HostedParty, findHost } from "../game/hosted.js";
-import { mount, preload } from "../game/party-view.js";
+import { mount, preload, switchesFor } from "../game/party-view.js";
 import { COUNT_IN, game } from "../game/shared/battle.js";
 import { CORKS_PER_ROUND, ROUND_SECONDS } from "../game/shared/sim.js";
 import { manifest } from "../party.js";
@@ -42,6 +42,11 @@ function fakeDocument(search = "") {
   doc.head = doc.createElement("head");
   return doc;
 }
+
+/** A room page's address with every switch a test run might ask for, and some it may not. */
+const ASKED = new URLSearchParams("join=1234&look=flat&cork-auto=1&cork-quality=low&cork-grid=row&cork-seed=7&cork-state=end&auto=1&seed=3");
+/** A room view as a party room with its test games on sends it: a test box on the wall. */
+const TEST_ROOM = { members: [], boxes: [{ id: "cork-and-bell" }, { id: "coin-flip", test: true }] };
 
 function mounted(overrides = {}, search = "") {
   const doc = fakeDocument(search);
@@ -83,13 +88,24 @@ describe("mounting the view", () => {
     expect(frame.style).toMatchObject({ position: "absolute", width: "100%", height: "100%" });
   });
 
-  it("passes a test run's cork-auto and cork-quality on to the game's page, and nothing else", () => {
-    const { frame } = mounted({}, "?cork-auto=1&cork-quality=low&join=1234&auto=0");
+  it("where the room has test games on, hands a test run's cork-* switches (and only they) to the page, not on its address", () => {
+    const { frame } = mounted({ room: TEST_ROOM }, "?" + ASKED);
+    expect(frame.partyHost.switches).toBe("auto=1&quality=low&grid=row");
+    expect(new URL(frame.src).search).toBe("?party=1");
     // A host that has rewritten its own address hands over the query it was opened with.
-    const later = mounted({ params: new URLSearchParams("cork-auto=1") }, "");
-    expect(new URL(later.frame.src).searchParams.get("auto")).toBe("1");
-    const q = new URL(frame.src).searchParams;
-    expect([q.get("auto"), q.get("quality"), q.get("join")]).toEqual(["1", "low", null]);
+    const later = mounted({ room: TEST_ROOM, params: new URLSearchParams("cork-auto=1") }, "");
+    expect(later.frame.partyHost.switches).toBe("auto=1");
+  });
+
+  it("where the room has no test games (production), ignores every cork-* switch: the house never plays for anyone", () => {
+    for (const room of [{ members: [], boxes: [{ id: "cork-and-bell" }, { id: "tin-derby" }] }, { members: [] }, null]) {
+      const { frame } = mounted({ room }, "?" + ASKED);
+      expect(frame.partyHost.switches).toBe("");
+      expect(frame.src).not.toMatch(/auto|quality|grid|seed|state/);
+      expect(switchesFor(room, ASKED)).toBe("");
+    }
+    // Only the server's word counts: a test flag that is not exactly true, or a box that is not a box, is not it.
+    for (const room of [{ boxes: [{ test: "yes" }] }, { boxes: [null, 7] }, { boxes: "test" }]) expect(switchesFor(room, ASKED)).toBe("");
   });
 
   it("keeps what the room says until the page is ready, then hands it over in order", () => {

@@ -24,6 +24,9 @@ export class LocalSession {
     this.attacks = this.state.attacks;
     this.ended = false;
     this.over = false;
+    /** What the high score board needs to play this run again (shared/run.js): the count-in, and [now, ax, ay] per cork fired. */
+    this.countIn = countIn;
+    this.shots = [];
   }
 
   time() {
@@ -42,6 +45,7 @@ export class LocalSession {
 
   fire(ax, ay) {
     if (!this.canFire()) return false;
+    this.shots.push([this.now, ax, ay]);
     game.input(this.state, this.mySeat, { f: [this.time(), ax, ay] }, this.now);
     return true;
   }

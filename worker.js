@@ -2,13 +2,16 @@
 // Run it locally with `npm run dev`. The kit comes from n8watkins/n8-party-games (a development
 // dependency); the party site hosts this same game through party.js instead of this file.
 import { createPartyRoom, PinDirectory, RateLimiter, RoomBudget, ScoreBoard, handlePartyApi } from "n8-party-games/kit";
-import { game, manifest } from "./party.js";
+import { game, manifest, scoreRun } from "./party.js";
 
 export const PartyRoom = createPartyRoom(game);
 export { PinDirectory, RateLimiter, RoomBudget, ScoreBoard };
 
-/** The high score board: this game's, with the most a round can score. */
-const SCORES = { [manifest.id]: { max: manifest.scores.max } };
+/**
+ * The high score board: this game's, with the most a round can score, and how the board plays a
+ * run again to score it (a kit that knows `scoreRun` chalks up only runs it handed out a seed for).
+ */
+const SCORES = { [manifest.id]: { max: manifest.scores.max, scoreRun } };
 /** Local test runs (the "local" environment) get a board of their own, so they never chalk up on the game's. */
 const TEST_SCORES = { ...SCORES, "e2e-test": { max: 1000 } };
 

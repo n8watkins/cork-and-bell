@@ -42,12 +42,19 @@ An upright phone still plays, with its own framing and a hint to turn it.
 | Address | What you get |
 | --- | --- |
 | `/cork-and-bell/` | The stall, with the start board: play alone, battle with friends, sound. The house plays behind it; a click or a touch on a target takes the gun and fires at once. |
-| `?auto=1` | The bot keeps playing (the attract mode, for a solo look). |
+| `?auto=1` | The bot keeps playing (the attract mode, for a solo look). With `host=1`, `join=` or `screen=1` it also makes or joins a battle and plays a seat, but only on a local test server (`npm run dev`); anywhere else it plays nobody's seat. |
 | `?seed=7` | A repeatable run. |
 | `?t=41&auto=1&seed=7` | The picture frozen at round time 41 s. |
 | `?state=last`, `end`, `jam`, `moths`, `dark` | The fast last stretch, the end card, or one attack on its own. |
 | `?view=wide`, `mech`, `far`, `front`, `gun`, `board` | Other cameras (`board` looks at the high scores). |
-| `?state=end&score=5120` | The end card with that score, to try the high score entry. |
+| `?state=end&score=5120` | The end card with that score, as a practice card. |
+
+A run set up by `seed`, `t`, `state` or `auto` is a practice run: it never goes on the high score board and never counts as this device's best.
+The board would refuse it anyway.
+It hands each real run its seed when the run starts, and chalks up only the score it gets by playing that run again from the corks the page fired (`game/shared/run.js`), once per seed.
+
+In a party room the game's page reads none of these from its own address.
+The room hands it `cork-auto`, `cork-quality` and `cork-grid` from the room's address, and only where the room has its test games on (`game/party-view.js`), never in production.
 | `?view=four` | Four stalls side by side with a bot in each: the battle as a shared screen shows it, with no room needed. |
 | `?join=4821` | The lobby with a PIN filled in (this is what the QR code opens). |
 | `?quality=low` or `high` | Lens and shadow quality (phones start on low). |
@@ -80,7 +87,7 @@ Decided before any code, and kept everywhere.
 - The ticket at the bottom left shows the time and the score, with the run (and what it multiplies by) and the corks left on its stub. It keeps clear of the cork tray on every screen shape.
 - Two challenges are chalked up each round (the same two for every stall in a battle), 75 to 150 extra each: five in a row, a ricochet onto a star, put out a lamp, and so on.
 - Everything in the stall answers a cork, for no points: lamps go out with a tinkle, the prizes on the shelf rock and fall, the chalk board smudges, the drive rings. A cork aimed over the top flies over the top.
-- The chalk board on the left wall is the high score board: everybody's ten best, kept by the server (`/api/party/scores/cork-and-bell`), with the house's own players among them. A solo score that makes it asks for three letters. Each device also keeps its own best, and the game plays on with that if the board cannot be reached.
+- The chalk board on the left wall is the high score board: everybody's ten best, kept by the server (`/api/party/scores/cork-and-bell`), with the house's own players among them. A solo score that makes it asks for three letters, and the server chalks up the score it gets by playing the run again, not one the page claims. Each device also keeps its own best, and the game plays on with that if the board cannot be reached.
 - Hits fill the bell's ring of lamps. When it is full the bell is live: ring it for 100.
 - The round is 90 seconds and the machine speeds up all the way through.
 
@@ -100,12 +107,13 @@ Decided before any code, and kept everywhere.
 | Path | What it is |
 | --- | --- |
 | `index.html` | The entry file. |
-| `party.js` | What a host needs: the server game definition and the manifest (name, path, players, public files). The party kit's GAME-CONTRACT.md is the contract. |
+| `party.js` | What a host needs: the server game definition, the manifest (name, path, players, public files) and `scoreRun` for the high score board. The party kit's GAME-CONTRACT.md is the contract. |
 | `worker.js`, `wrangler.jsonc` | The game's own site: its files and the party kit's room API, as one Cloudflare Worker (production at the top level, `local` for play and tests). |
 | `scripts/build-public.mjs` | Builds `dist/public`, the only folder served: the files `party.js` lists and the kit's browser files. |
 | `game/shared/layout.js` | The stall in metres: one source for the bake, the simulation and the picture. |
 | `game/shared/sim.js` | One stall, simulated in fixed steps from a seed. Runs in the room and in every browser. |
 | `game/shared/battle.js` | The battle as a party kit game: inputs, bots, attacks, blocks, snapshots. |
+| `game/shared/run.js` | A solo run played again from its seed and the corks the page fired: the score the high score board chalks up. |
 | `game/session.js` | A round as the browser sees it: local (solo, attract) or following a room. |
 | `game/party-view.js`, `game/hosted.js` | The game as a view a party room mounts over itself: see "Inside a party room". |
 | `game/view/` | The picture: the lens (`render.js`), the stall (`stall.js`), hand-painted textures (`paint.js`). |

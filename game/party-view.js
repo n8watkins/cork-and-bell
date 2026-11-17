@@ -19,6 +19,26 @@
 /** Where the game's page is, from wherever a host serves this module. */
 const PAGE = new URL("../", import.meta.url);
 
+/** The test switches a party room's test run may ask for, as cork-<name> on the room's address. */
+const SWITCHES = ["auto", "quality", "grid"];
+
+/**
+ * The test switches a run asks for on the room's address (cork-auto=1: the game's bot plays this
+ * seat; cork-quality=low|high; cork-grid=row), handed to the game's page as a query string
+ * (`partyHost.switches`), never on its address. Only where the room has its test games on: the
+ * server hangs a test box on the wall (`test: true`) only where its test games are on, never in
+ * production, so there anyone adding ?cork-auto=1 to the address gets nothing.
+ * @param {object} room  the room's view, as the server sent it (its `boxes`)
+ * @param {URLSearchParams} asked  the room page's address
+ * @returns {string}
+ */
+export function switchesFor(room, asked) {
+  const tests = Array.isArray(room?.boxes) && room.boxes.some((box) => box?.test === true);
+  const out = new URLSearchParams();
+  if (tests) for (const key of SWITCHES) if (asked.has(`cork-${key}`)) out.set(key, asked.get(`cork-${key}`));
+  return out.toString();
+}
+
 /**
  * @param {HTMLElement} container  an empty box laid over the host's page; the game fills it
  * @param {object} ctx
@@ -68,17 +88,18 @@ export function mount(container, { room, you, snapshot, send, now, inset = {}, p
     },
     /** Set by the page: frees the lens and the sound at once, instead of when the frame is collected. */
     dispose: null,
+    /** The test switches, where the room allows them (switchesFor), as a query string; "" otherwise. */
+    switches: "",
   };
   frame.title = "Cork & Bell";
   frame.setAttribute("allow", "autoplay; fullscreen; screen-wake-lock");
   // Set through the style object, never a style attribute: a host's Content-Security-Policy may forbid those.
   Object.assign(frame.style, { position: "absolute", inset: "0", width: "100%", height: "100%", border: "0", display: "block", background: "#0b1020" });
+  // A host's test run can ask for the bot to play this seat, or for a quality: ?cork-auto=1,
+  // ?cork-quality=low, ?cork-grid=row on the host's address (or in ctx.params), where its test games are on.
+  frame.partyHost.switches = switchesFor(room, params ?? new URLSearchParams(doc.defaultView?.location.search ?? ""));
   const address = new URL(PAGE);
   address.searchParams.set("party", "1");
-  // A host's test run can ask for the bot to play this seat, or for a quality, as on the game's own
-  // page: ?cork-auto=1, ?cork-quality=low, ?cork-grid=row on the host's address (or in ctx.params).
-  const asked = params ?? new URLSearchParams(doc.defaultView?.location.search ?? "");
-  for (const key of ["auto", "quality", "grid"]) if (asked.has(`cork-${key}`)) address.searchParams.set(key, asked.get(`cork-${key}`));
   frame.src = address.href;
   container.append(frame);
   // Keys aim and fire too, and they go to whichever document has the focus.
