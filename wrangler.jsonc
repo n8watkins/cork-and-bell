@@ -41,7 +41,9 @@
     // are refused and solo play carries on. This site hosts the one game.
     "PARTY_ROOM_BUDGET_SHARE": "0.1",
     "PARTY_RATE_LIMIT": "on",
-    "PARTY_SIM_LATENCY": "off"
+    "PARTY_SIM_LATENCY": "off",
+    // No test switches in production: ?auto=1 never plays a seat in a battle, and the e2e-test board does not exist.
+    "PARTY_TEST_GAMES": "off"
     // The bot check on new rooms (Cloudflare Turnstile) is off until both keys exist:
     // TURNSTILE_SITE_KEY here (it is public), TURNSTILE_SECRET_KEY as a secret. See DEPLOY.md.
   },
@@ -61,7 +63,9 @@
         "PARTY_ROOM_BUDGET_SHARE": "0.1",
         // Lets tests ask for simulated latency (?lag=150) and run many headless players.
         "PARTY_SIM_LATENCY": "on",
-        "PARTY_RATE_LIMIT": "off"
+        "PARTY_RATE_LIMIT": "off",
+        // The test switches (as on the party site): ?auto=1&host=1 bot battles (/config's testGames) and the e2e-test board.
+        "PARTY_TEST_GAMES": "on"
       }
     }
   }

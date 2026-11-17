@@ -42,23 +42,33 @@ An upright phone still plays, with its own framing and a hint to turn it.
 | Address | What you get |
 | --- | --- |
 | `/cork-and-bell/` | The stall, with the start board: play alone, battle with friends, sound. The house plays behind it; a click or a touch on a target takes the gun and fires at once. |
-| `?auto=1` | The bot keeps playing (the attract mode, for a solo look). With `host=1`, `join=` or `screen=1` it also makes or joins a battle and plays a seat, but only on a local test server (`npm run dev`); anywhere else it plays nobody's seat. |
+| `?auto=1` | The bot keeps playing (the attract mode, for a solo look). With `host=1`, `join=` or `screen=1` it also makes or joins a battle and plays a seat, but only where the server has its test games on (`PARTY_TEST_GAMES`, which `/api/party/config` reports as `testGames`: a local test server, `npm run dev`); anywhere else it plays nobody's seat. |
 | `?seed=7` | A repeatable run. |
 | `?t=41&auto=1&seed=7` | The picture frozen at round time 41 s. |
 | `?state=last`, `end`, `jam`, `moths`, `dark` | The fast last stretch, the end card, or one attack on its own. |
 | `?view=wide`, `mech`, `far`, `front`, `gun`, `board` | Other cameras (`board` looks at the high scores). |
 | `?state=end&score=5120` | The end card with that score, as a practice card. |
-
-A run set up by `seed`, `t`, `state` or `auto` is a practice run: it never goes on the high score board and never counts as this device's best.
-The board would refuse it anyway.
-It hands each real run its seed when the run starts, and chalks up only the score it gets by playing that run again from the corks the page fired (`game/shared/run.js`), once per seed.
-
-In a party room the game's page reads none of these from its own address.
-The room hands it `cork-auto`, `cork-quality` and `cork-grid` from the room's address, and only where the room has its test games on (`game/party-view.js`), never in production.
 | `?view=four` | Four stalls side by side with a bot in each: the battle as a shared screen shows it, with no room needed. |
 | `?join=4821` | The lobby with a PIN filled in (this is what the QR code opens). |
 | `?quality=low` or `high` | Lens and shadow quality (phones start on low). |
 | `?grid=row` | With four stalls on a shared screen: one row of four upright stalls instead of two rows of two. |
+
+A run set up by `seed`, `t`, `state`, `auto` or a `view` other than the player's (which changes where a click aims) is a practice run: it never goes on the high score board and never counts as this device's best.
+
+In a party room the game's page reads none of these from its own address.
+The room hands it `cork-auto`, `cork-quality` and `cork-grid` from the room's address, and only where the room has its test games on (`game/party-view.js`), never in production.
+
+### What the high score board proves
+
+A solo run picks its own seed.
+When a score makes the board, the page sends the run itself: the seed, the count-in, every cork it fired with its moment and aim, and the version of the rules it was played by (`RUN_VERSION`).
+The server plays that run again with the game's own code (`game/shared/run.js`) and chalks up the score that gives, never a score the page claims.
+It keeps each row's seed, so the same run sent twice is turned away, and a run of another version of the rules is not scored.
+The simulation gives the same bits in every browser engine and in the Worker (`game/shared/dmath.js`; `npm run test:engines` checks Chromium, Firefox and WebKit against Node), so an honest run lands at exactly the score the page showed.
+
+So the board proves the run follows the game's rules: the lever, the tray, the clock and where each cork could go.
+It does not prove a person played it.
+A script can play the game's own code, on any seed it likes, as well as a page can.
 
 Sound is off until you turn it on: **Sound is off** on the start board, the **Sound: off** switch at the top right during a round, or the M key.
 
@@ -113,7 +123,8 @@ Decided before any code, and kept everywhere.
 | `game/shared/layout.js` | The stall in metres: one source for the bake, the simulation and the picture. |
 | `game/shared/sim.js` | One stall, simulated in fixed steps from a seed. Runs in the room and in every browser. |
 | `game/shared/battle.js` | The battle as a party kit game: inputs, bots, attacks, blocks, snapshots. |
-| `game/shared/run.js` | A solo run played again from its seed and the corks the page fired: the score the high score board chalks up. |
+| `game/shared/run.js` | A solo run played again from its seed and the corks the page fired: the score the high score board chalks up. Bump `RUN_VERSION` when a change would score a recorded run differently, then `node tools/golden-run.mjs` (test/run.test.js fails until then). |
+| `game/shared/dmath.js` | Sine and cosine that give the same bits on every engine, for the simulation (Math.sin and Math.cos do not). |
 | `game/session.js` | A round as the browser sees it: local (solo, attract) or following a room. |
 | `game/party-view.js`, `game/hosted.js` | The game as a view a party room mounts over itself: see "Inside a party room". |
 | `game/view/` | The picture: the lens (`render.js`), the stall (`stall.js`), hand-painted textures (`paint.js`). |
@@ -122,7 +133,7 @@ Decided before any code, and kept everywhere.
 | `game/baked/` | The Cycles bake: `set.glb`, albedo, two light maps, and the environment the moving things reflect. |
 | `game/vendor/` | three.js r186, local. |
 | `tools/blender/build_set.py` | Builds the static set by script and bakes it (`tools/blender/run.sh build_set.py 4096 64`). |
-| `tools/*.mjs` | Screenshots, the two playtests, and the real-GPU frame rate measurement. |
+| `tools/*.mjs` | Screenshots, the two playtests, the real-GPU frame rate measurement, the golden run (`golden-run.mjs`) and the engine check (`engines.mjs`: 400 solo runs played and scored in Node, Chromium, Firefox and WebKit, compared bit for bit). |
 
 Rooms, PINs, the QR code, seats, reconnecting and the waiting room come from the party kit (`node_modules/n8-party-games/party-kit`, served at `/party-kit/client/`); this game adds no join flow of its own.
 The kit's README there has the room rules, the API and what hosting costs.

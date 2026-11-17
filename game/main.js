@@ -1,11 +1,12 @@
 // Cork & Bell: boot, modes, input, the frame loop and the HUD.
 //
-// URL switches. Any run set up by one (seed, t, state, auto) is a practice run: it never goes on
-// the high score board, nor counts as this device's best. In a party room the page reads none of
-// them from its address: the room hands over cork-auto, cork-quality and cork-grid, and only where
-// its test games are on (party-view.js).
+// URL switches. Any run set up by one (seed, t, state, auto, or a view other than the player's,
+// which changes where a click aims) is a practice run: it never goes on the high score board, nor
+// counts as this device's best. In a party room the page reads none of them from its address: the
+// room hands over cork-auto, cork-quality and cork-grid, and only where its test games are on
+// (party-view.js).
 //   ?auto=1          a bot plays (this is also the attract mode); in a battle it plays this seat,
-//                    only where the room server has its test switches on (a local test server)
+//                    only where the server has its test games on (a local test server: /config's testGames)
 //   ?seed=<n>        a repeatable solo run
 //   ?t=<seconds>     freeze the picture at that round time
 //   ?state=<name>    last (the fast last stretch), end (the end card), jam | moths | dark (one attack)
@@ -29,6 +30,7 @@ import { Scores } from "./scores.js";
 import { LocalSession, NetSession } from "./session.js";
 import { ATTACK_NAMES, COUNT_IN, game } from "./shared/battle.js";
 import { COUNTER, TRAY } from "./shared/layout.js";
+import { RUN_VERSION } from "./shared/run.js";
 import { BELL_FULL, COCK_SECONDS, CORKS_PER_ROUND, RICOCHET_TIMES, ROUND_SECONDS, StallSim, TASKS, mech, speedAt } from "./shared/sim.js";
 import { Lens, fourInARow, gridFor } from "./view/render.js";
 import { StallAssets, StallView } from "./view/stall.js";
@@ -57,17 +59,19 @@ const P = {
 };
 fourInARow(P.grid === "row");
 /**
- * A run set up from the address (a seed, a state, a frozen moment, the bot): for looking and for
- * the tools. It never goes on the high score board, nor counts as this device's best.
+ * A run set up from the address (a seed, a state, a frozen moment, the bot, another camera, which
+ * changes where a click aims): for looking and for the tools. It never goes on the high score
+ * board, nor counts as this device's best.
  */
-const practice = P.seed !== null || P.state !== null || P.freeze !== null || P.auto;
+const practice = P.seed !== null || P.state !== null || P.freeze !== null || P.auto || P.view !== "player";
 /**
  * The game's bot holds this page's gun (?auto=1). On the page alone that is the attract mode. In a
- * battle it plays a seat only where the room server has its test switches on (a local test server:
- * the kit's /config says `simLatency`), so ?auto=1 never plays anyone's seat in a real room.
+ * battle it plays a seat only where the server has its test games on (a local test server: the
+ * kit's /config says `testGames`, as the party room's wall does), so ?auto=1 never plays anyone's
+ * seat in a real room.
  */
 let auto = P.auto;
-/** True once the room server has said its test switches are on. */
+/** True once the server has said its test games are on. */
 let serverTests = false;
 /** True when this page made or joined a room by itself for a test run (?auto=1 with host, join or screen). */
 let autoRoom = false;
@@ -152,13 +156,13 @@ function statLine(r, sim) {
   return `${r.hits} hits from ${r.shots} corks (${aim}%), best run ${r.best}` + (sim ? `, ${done} of ${sim.taskDone.length} challenges` : "");
 }
 
-/** The run on the end card, as the board needs it to play it again: {run, countIn, shots}. */
+/** The run on the end card, as the board needs it to play it again: {seed, countIn, shots, v} (shared/run.js). */
 let cardRun = null;
 
-/** The end card's last word on a solo score, when there are no letters to ask for. `ticketed`: the board handed this run its seed. */
-function scoreNote(score, newBest, ticketed = true) {
+/** The end card's last word on a solo score, when there are no letters to ask for. */
+function scoreNote(score, newBest) {
   const best = scores.ownBest()?.score ?? score;
-  if (!scores.reachable || !ticketed) return newBest ? "A new best on this device. (The high score board could not be reached.)" : `Your best on this device is ${best}. (The high score board could not be reached.)`;
+  if (!scores.reachable) return newBest ? "A new best on this device. (The high score board could not be reached.)" : `Your best on this device is ${best}. (The high score board could not be reached.)`;
   const rows = scores.top;
   const toBeat = rows.length ? rows[rows.length - 1].score : 0;
   return newBest ? `Your best yet. ${toBeat + 1} gets you on the board.` : `Your best is ${best}. ${toBeat + 1} gets you on the board.`;
@@ -207,16 +211,22 @@ $("initials").addEventListener("submit", async (e) => {
   const result = cardRun && Number.isFinite(score) ? await scores.submit(name, cardRun) : { ok: false, error: "offline" };
   endShownAt = performance.now();
   if (!result.ok && (result.error === "bad_name" || result.error === "rate_limited")) {
+    // Either way the form stays open, for other letters or for another try in a while.
     say.textContent = result.error === "bad_name" ? "Not those three. Try three others." : "Too many scores from here just now. Try again in a few minutes.";
-    input.disabled = result.error !== "bad_name";
-    $("initials-ok").disabled = result.error !== "bad_name";
+    input.disabled = false;
+    $("initials-ok").disabled = false;
     if (result.error === "bad_name") input.focus();
     return;
   }
   form.hidden = true;
   input.blur();
   if (!result.ok) {
-    $("card-note").textContent = "The board could not be reached, so it is not chalked up. Your best on this device is kept.";
+    $("card-note").textContent =
+      result.error === "bad_request"
+        ? "This round could not be checked, so it is not chalked up."
+        : result.error === "already_chalked"
+          ? "This round is on the board already."
+          : "The board could not be reached, so it is not chalked up. Your best on this device is kept.";
     return;
   }
   scores.rememberInitials(name);
@@ -272,17 +282,14 @@ function makeViews(seats, mySeat) {
 function startLocal(kind, { countIn = COUNT_IN } = {}) {
   session?.dispose?.();
   mode = kind;
-  // A real run takes the seed the high score board handed out for it (its ticket): only such a run
-  // can go on the board, which plays it again from that seed (shared/run.js). Without a ticket
-  // (the board could not be reached), or in a practice run, the seed is the page's own.
-  const ticket = kind === "solo" && !practice ? scores.takeRun() : null;
-  const seed = ticket?.seed ?? P.seed ?? (Math.random() * 2 ** 31) | 0;
+  // A run picks its own seed (any of 2^32); the high score board plays it again from that seed and
+  // the corks it fired (shared/run.js). ?seed= sets one for a practice run.
+  const seed = P.seed ?? Math.floor(Math.random() * 2 ** 32);
   const seats =
     kind === "four"
       ? ["Mabel", "Old Tom", "Fitch", "Dolly"].map((name, seat) => ({ seat, name, kind: "bot" }))
       : [{ seat: 0, name: kind === "solo" ? "You" : "The house", kind: kind === "solo" ? "human" : "bot" }];
   session = new LocalSession({ seed, seats, mySeat: kind === "four" ? -1 : 0, countIn, botSkill: kind === "four" ? 0.75 : 0.95 });
-  session.run = ticket?.run ?? null;
   makeViews(seats, kind === "four" ? -1 : 0);
   endShownAt = null;
   lastTime = -99;
@@ -940,10 +947,10 @@ function showCard() {
     } else if (mode === "solo") {
       const newBest = scores.keepOwnBest(r.score);
       if (!scores.reachable) assets.chalk.draw(scores.rows());
-      if (session.run && scores.makesBoard(r.score)) {
+      if (scores.makesBoard(r.score)) {
         wantInitials = r.score;
-        cardRun = { run: session.run, countIn: session.countIn, shots: session.shots };
-      } else note = scoreNote(r.score, newBest, !!session.run);
+        cardRun = { seed: session.seed, countIn: session.countIn, shots: session.shots, v: RUN_VERSION };
+      } else note = scoreNote(r.score, newBest);
     }
   } else {
     const win = rows[0];
@@ -1118,8 +1125,6 @@ onEvent = function (e) {
 
 async function main() {
   lens.resize(innerWidth, innerHeight, devicePixelRatio || 1);
-  // The board's ticket for the first real run, asked for while the stall loads: ready before anyone can take the gun.
-  if (!host && !practice) scores.fetchRun();
   await load();
   if (disposed) return; // the host took the page away while the lamps were being lit
   $("loading").classList.add("gone");
@@ -1158,10 +1163,11 @@ async function main() {
     showCard();
   }
   if (P.auto && (P.host || P.join || P.screen)) {
-    // Only where the room server says its test switches are on; anywhere else the page is as anyone finds it.
+    // Only where the server says its test games are on (PARTY_TEST_GAMES, the same switch that hangs
+    // the party room's test games); anywhere else the page is as anyone finds it.
     party
       .config()
-      .then((config) => (serverTests = config?.simLatency === true))
+      .then((config) => (serverTests = config?.testGames === true))
       .catch(() => false)
       .then((tests) => (tests ? autoBattle() : P.join && openLobby()));
   } else if (P.join) openLobby();

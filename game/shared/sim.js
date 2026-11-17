@@ -2,7 +2,14 @@
 // (for an instant picture), so it is deterministic: fixed steps, and every random number is
 // drawn from the seed and the shot's number.
 //
+// It must also give the same bits on every engine (the high score board plays a solo run again in
+// the Worker: run.js). So it uses only +, -, *, /, Math.sqrt (exact everywhere), the integer and
+// rounding helpers (Math.floor, round, min, max, abs, imul) and dmath.js's sin and cos: never
+// Math.sin, cos, tan, pow, exp, log, hypot, atan2 or `**`, which each engine rounds its own way.
+// test/determinism.test.js keeps it so.
+//
 // Time `t` is round time in seconds (0 at the opening bell, negative during the count-in).
+import { cos, sin } from "./dmath.js";
 import { BACK, BELL, CHAIN, CHALK_BOARD, COUNTER, DRIVE, HALF_W, JAM, LAMPS, PENDULUMS, PENDULUM_RATE, PLATES, ROWS, SHUTTER, STEPS, STEP_LEFT, VASES, WALL_TOP, muzzle } from "./layout.js";
 
 export const DT = 1 / 120;
@@ -102,12 +109,12 @@ export function chainStar(i, t) {
 }
 
 export function pendulumAngle(p, t) {
-  return p.amp * Math.sin(PENDULUM_RATE * mech(t) * 0.62 + p.phase);
+  return p.amp * sin(PENDULUM_RATE * mech(t) * 0.62 + p.phase);
 }
 
 export function pendulumBob(p, t) {
   const a = pendulumAngle(p, t);
-  return { x: p.px + Math.sin(a) * p.len, y: p.py - Math.cos(a) * p.len, a };
+  return { x: p.px + sin(a) * p.len, y: p.py - cos(a) * p.len, a };
 }
 
 /** 0 closed .. 1 open. */
@@ -136,7 +143,8 @@ export function camLift(t) {
 export function backTop(x) {
   const half = BACK.archHalfW + 0.08;
   const rail = BACK.top + 0.1;
-  return Math.abs(x) < half ? rail + (BACK.archH + 0.02) * Math.sqrt(1 - (x / half) ** 2) : rail;
+  const u = x / half; // a plain multiply below, not `** 2`: pow is not exact on every engine
+  return Math.abs(x) < half ? rail + (BACK.archH + 0.02) * Math.sqrt(1 - u * u) : rail;
 }
 
 function stepTop(z, x) {

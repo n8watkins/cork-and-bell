@@ -9,17 +9,18 @@ export { PinDirectory, RateLimiter, RoomBudget, ScoreBoard };
 
 /**
  * The high score board: this game's, with the most a round can score, and how the board plays a
- * run again to score it (a kit that knows `scoreRun` chalks up only runs it handed out a seed for).
+ * run again to score it. A kit that knows `scoreRun` chalks up only the score it gets by playing
+ * the run the page sends; it never takes a bare score (test/worker.test.js holds the pinned kit to it).
  */
 const SCORES = { [manifest.id]: { max: manifest.scores.max, scoreRun } };
-/** Local test runs (the "local" environment) get a board of their own, so they never chalk up on the game's. */
+/** Local test runs (the "local" environment, PARTY_TEST_GAMES on) get a board of their own, so they never chalk up on the game's. */
 const TEST_SCORES = { ...SCORES, "e2e-test": { max: 1000 } };
 
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     if (url.pathname === "/") return Response.redirect(new URL(manifest.path + url.search, url), 302);
-    const scores = env.PARTY_SIM_LATENCY === "on" ? TEST_SCORES : SCORES;
+    const scores = env.PARTY_TEST_GAMES === "on" ? TEST_SCORES : SCORES;
     return (await handlePartyApi(request, env, { scores })) ?? env.ASSETS.fetch(request);
   },
 };

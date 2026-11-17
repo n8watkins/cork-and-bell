@@ -16,17 +16,14 @@ export const HOUSE = [
 const API = "/api/party/scores/cork-and-bell";
 const BEST_KEY = "cork-and-bell:own-best";
 const SERVER_ROWS = 10;
-/** A ticket is used only while well within the time the board keeps it (the kit's RUN_TTL_MS, twelve hours). */
-const RUN_FRESH_MS = 6 * 60 * 60 * 1000;
+/** The refusals the end card words in its own way; anything else is the board out of reach. */
+const REFUSALS = new Set(["bad_name", "rate_limited", "bad_request", "already_chalked"]);
 
 export class Scores {
   constructor() {
     this.top = null; // the server's rows, or null while it has not answered (or cannot be reached)
     this.minePlace = -1; // where in `top` the row this device has just chalked up is, or -1
     this.onChange = () => {};
-    /** The board's ticket for the next run ({run, seed, at}), or null. */
-    this.ticket = null;
-    this.fetching = null;
   }
 
   get reachable() {
@@ -56,42 +53,15 @@ export class Scores {
   }
 
   /**
-   * Asks the board for a ticket for the next run: {run, seed}, the seed that run is played on. The
-   * board plays a run again only from a seed it handed out, and once. Never throws: no answer
-   * leaves the page without a ticket, and its next run cannot go on the board.
+   * Sends a run to be played again and chalked up: {seed, countIn, shots, v} (shared/run.js); the
+   * board works out the score itself. Answers {ok: true, place} (place -1: it did not make the
+   * board after all), or {ok: false, error}: "bad_name" (the letters are refused), "rate_limited",
+   * "bad_request" (the board could not check the run: it is not one its own code scores),
+   * "already_chalked" (this run is on the board already), or "offline" (no answer).
    */
-  async fetchRun() {
-    if (this.fetching) return this.fetching;
-    this.fetching = (async () => {
-      try {
-        const res = await fetch(API + "/runs", { method: "POST", headers: { Accept: "application/json" } });
-        const body = res.ok ? await res.json() : null;
-        if (body?.ok && typeof body.run === "string" && Number.isInteger(body.seed)) this.ticket = { run: body.run, seed: body.seed, at: Date.now() };
-      } catch {
-        // Offline, or a server without a board.
-      } finally {
-        this.fetching = null;
-      }
-    })();
-    return this.fetching;
-  }
-
-  /** The ticket for the run starting now, or null; the next one is asked for at once. */
-  takeRun() {
-    const ticket = this.ticket;
-    this.ticket = null;
-    this.fetchRun();
-    return ticket && Date.now() - ticket.at < RUN_FRESH_MS ? ticket : null;
-  }
-
-  /**
-   * Sends a run to be played again and chalked up: {run, countIn, shots} (shared/run.js). Answers
-   * {ok: true, place} (place -1: it did not make the board after all), {ok: false, error: "bad_name"}
-   * when the letters are refused, {ok: false, error: "rate_limited"}, or {ok: false, error: "offline"}.
-   */
-  async submit(name, { run, countIn, shots }) {
+  async submit(name, { seed, countIn, shots, v }) {
     try {
-      const res = await fetch(API, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name, run, countIn, shots }) });
+      const res = await fetch(API, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name, seed, countIn, shots, v }) });
       const body = await res.json().catch(() => null);
       if (body?.ok) {
         this.top = body.top;
@@ -99,7 +69,7 @@ export class Scores {
         this.onChange();
         return { ok: true, place: body.place };
       }
-      return { ok: false, error: body?.error === "bad_name" ? "bad_name" : body?.error === "rate_limited" ? "rate_limited" : "offline" };
+      return { ok: false, error: REFUSALS.has(body?.error) ? body.error : "offline" };
     } catch {
       return { ok: false, error: "offline" };
     }
