@@ -7,10 +7,13 @@
 // did not hand out (?seed=7), or a run sent twice cannot reach the board: the board hands out
 // each seed once, and only a seed it handed out is played again (party kit, "scores").
 import { COUNT_IN, END_HOLD, createBattle, game, roundTime } from "./battle.js";
-import { CORKS_PER_ROUND, ROUND_SECONDS } from "./sim.js";
+import { COCK_SECONDS, ROUND_SECONDS } from "./sim.js";
 
-/** The most corks a run may list: a page sends a cork only when the lever is cocked and a cork is left. */
-export const MAX_RUN_SHOTS = CORKS_PER_ROUND * 2;
+/**
+ * The most corks a run may list: a page sends one only when the lever is cocked (and a cork is
+ * left, but dead-centre hits give corks back, so the lever is the bound): one a cock for the round.
+ */
+export const MAX_RUN_SHOTS = Math.ceil(ROUND_SECONDS / (COCK_SECONDS - 0.02)) + 1;
 /** The page's clock runs in milliseconds from the run's start (LocalSession.now). Nothing is fired after the time call. */
 const LAST_SHOT_MS = (COUNT_IN + ROUND_SECONDS) * 1000;
 const STEP_MS = 1000 / 60;

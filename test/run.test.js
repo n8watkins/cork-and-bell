@@ -43,6 +43,20 @@ describe("a solo run played again", () => {
     }
   });
 
+  it("comes to the score the page showed over many seeds, also when dead-centre hits gave corks back", () => {
+    const random = rng(2026);
+    let given = 0;
+    for (let i = 0; i < 60; i++) {
+      const seed = Math.floor(random() * 2 ** 32);
+      const { score, run } = playSolo({ seed, countIn: [0, 1, 1.2, COUNT_IN][i % 4], frames: i });
+      if (run.shots.length > 35) given++;
+      expect(run.shots.length).toBeLessThanOrEqual(MAX_RUN_SHOTS);
+      expect(scoreRun(run), `seed ${seed}`).toBe(score);
+    }
+    // Runs that fired more than a round's corks are common: the bound is the lever, not the tray.
+    expect(given).toBeGreaterThan(0);
+  });
+
   it("comes to the score of a run begun by taking the gun from the house", () => {
     const { score, run } = playSolo({ seed: 31337, countIn: 0, takeOver: true });
     expect(run.shots[0][0]).toBe(0);
@@ -87,7 +101,7 @@ describe("a solo run played again", () => {
       { ...ok, shots: [[2000, 0, 1], [1000, 0, 1]] },
       { ...ok, shots: [[-1, 0, 1]] },
       { ...ok, shots: [[(COUNT_IN + 91) * 1000, 0, 1]] },
-      { ...ok, shots: Array.from({ length: MAX_RUN_SHOTS + 1 }, (_, i) => [1000 + i * 600, 0, 1.5]) },
+      { ...ok, shots: Array.from({ length: MAX_RUN_SHOTS + 1 }, (_, i) => [1000 + i * 400, 0, 1.5]) },
     ])
       expect(scoreRun(bad)).toBeNull();
   });
