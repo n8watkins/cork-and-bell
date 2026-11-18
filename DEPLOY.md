@@ -37,7 +37,7 @@ Everything else is already in the repository.
 
 ## Check it after going live
 
-16. Open `https://<your address>/api/party/config` and confirm `simLatency` is `false` and `turnstileSiteKey` is your site key.
+16. Open `https://<your address>/api/party/config` and confirm `simLatency` and `testGames` are both `false` and `turnstileSiteKey` is your site key.
 17. Open the game on a laptop, make a room (the bot check runs, and usually shows nothing), and join it by PIN from a phone.
 18. Confirm that `https://<your address>/package.json`, `/wrangler.jsonc` and `/party-kit/README.md` all answer 404.
 19. Play one round to the end, then leave the room open in the lobby on both devices for at least 15 minutes.

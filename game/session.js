@@ -24,6 +24,10 @@ export class LocalSession {
     this.attacks = this.state.attacks;
     this.ended = false;
     this.over = false;
+    /** What the high score board needs to play this run again (shared/run.js): the seed, the count-in, and [now, ax, ay] per cork fired. */
+    this.seed = seed;
+    this.countIn = countIn;
+    this.shots = [];
   }
 
   time() {
@@ -37,11 +41,14 @@ export class LocalSession {
   canFire(seat = this.mySeat) {
     const sim = this.sims[seat];
     const t = this.time();
-    return t >= 0 && t < ROUND_SECONDS && !sim.over && sim.corksLeft > 0 && t - sim.lastFire >= COCK_SECONDS - 0.02 && this.state.endAt === null;
+    // No cork still waiting for its step (sim.pending): a second one could be one the door refuses,
+    // and the run the high score board plays again (`shots`) must hold only corks the stall took.
+    return t >= 0 && t < ROUND_SECONDS && !sim.over && sim.corksLeft > 0 && sim.pending.length === 0 && t - sim.lastFire >= COCK_SECONDS - 0.02 && this.state.endAt === null;
   }
 
   fire(ax, ay) {
     if (!this.canFire()) return false;
+    this.shots.push([this.now, ax, ay]);
     game.input(this.state, this.mySeat, { f: [this.time(), ax, ay] }, this.now);
     return true;
   }

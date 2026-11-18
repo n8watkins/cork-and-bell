@@ -1,5 +1,10 @@
 // The stall, in metres. One source for the bake (Blender), the simulation (room and browser)
 // and the picture. Axes: x to the right, y up, z towards the player; the stall runs into -z.
+//
+// The simulation reads these numbers (the lamps a cork can put out among them), so they are worked
+// out the same on every engine: dmath.js's sin and cos and plain multiplies, never Math.sin, cos or
+// `**` (see sim.js).
+import { cos, sin } from "./dmath.js";
 
 export const HALF_W = 1.25;
 
@@ -79,7 +84,7 @@ function borderBulbs() {
   const n = 11;
   for (let i = 0; i < n; i++) {
     const a = Math.PI - (i / (n - 1)) * Math.PI;
-    out.push([Math.cos(a) * (BACK.archHalfW + 0.02), BACK.top + 0.06 + Math.sin(a) * (BACK.archH + 0.02), z]);
+    out.push([cos(a) * (BACK.archHalfW + 0.02), BACK.top + 0.06 + sin(a) * (BACK.archH + 0.02), z]);
   }
   out.push([0.98, 2.24, z]);
   out.push([x - 0.04, 2.2, z]);
@@ -103,7 +108,8 @@ function festoonBulbs() {
   const out = [];
   for (let i = 0; i < 11; i++) {
     const u = i / 10;
-    out.push([-2.6 + u * 5.2, 2.66 + 0.62 * (2 * u - 1) ** 2, -3.5]);
+    const v = 2 * u - 1;
+    out.push([-2.6 + u * 5.2, 2.66 + 0.62 * v * v, -3.5]);
   }
   return out;
 }

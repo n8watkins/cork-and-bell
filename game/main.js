@@ -1,15 +1,20 @@
 // Cork & Bell: boot, modes, input, the frame loop and the HUD.
 //
-// URL switches:
-//   ?auto=1          a bot plays (this is also the attract mode); in a battle it plays this seat
+// URL switches. Any run set up by one (seed, t, state, auto, or a view other than the player's,
+// which changes where a click aims) is a practice run: it never goes on the high score board, nor
+// counts as this device's best. In a party room the page reads none of them from its address: the
+// room hands over cork-auto, cork-quality and cork-grid, and only where its test games are on
+// (party-view.js).
+//   ?auto=1          a bot plays (this is also the attract mode); in a battle it plays this seat,
+//                    only where the server has its test games on (a local test server: /config's testGames)
 //   ?seed=<n>        a repeatable solo run
 //   ?t=<seconds>     freeze the picture at that round time
 //   ?state=<name>    last (the fast last stretch), end (the end card), jam | moths | dark (one attack)
 //   ?view=<name>     player (default), wide, mech, far, front, gun, board (the chalk board), four (four stalls side by side)
 //   ?score=<n>       (with state=end) the score the end card shows, to try the high score entry
 //   ?join=<pin>      open the lobby with a PIN filled in
-//   ?host=1&seats=4&name=Ann   (with auto=1) make a room and start when that many are ready
-//   ?screen=1        (with auto=1) make a room as the shared screen
+//   ?host=1&seats=4&name=Ann   (with auto=1, on a local test server) make a room and start when that many are ready
+//   ?screen=1        (with auto=1, on a local test server) make a room as the shared screen
 //   ?lag=<ms>        simulated latency each way (local test rooms only)
 //   ?quality=low|high
 //   ?grid=row        four stalls in one row on a shared screen (the default is two rows of two)
@@ -25,11 +30,16 @@ import { Scores } from "./scores.js";
 import { LocalSession, NetSession } from "./session.js";
 import { ATTACK_NAMES, COUNT_IN, game } from "./shared/battle.js";
 import { COUNTER, TRAY } from "./shared/layout.js";
+import { RUN_VERSION } from "./shared/run.js";
 import { BELL_FULL, COCK_SECONDS, CORKS_PER_ROUND, RICOCHET_TIMES, ROUND_SECONDS, StallSim, TASKS, mech, speedAt } from "./shared/sim.js";
 import { Lens, fourInARow, gridFor } from "./view/render.js";
 import { StallAssets, StallView } from "./view/stall.js";
 
-const params = new URLSearchParams(location.search);
+/** A party room that mounted this page as one of its games, or null: the page on its own. */
+const host = findHost(new URLSearchParams(location.search));
+// In a party room the switches are the ones the room hands over (cork-auto and the rest, and only
+// where its test games are on: party-view.js), never this frame's own address.
+const params = host ? new URLSearchParams(typeof host.switches === "string" ? host.switches : "") : new URLSearchParams(location.search);
 const num = (k, d) => (params.has(k) && Number.isFinite(Number(params.get(k))) ? Number(params.get(k)) : d);
 const P = {
   auto: params.get("auto") === "1",
@@ -48,6 +58,23 @@ const P = {
   grid: params.get("grid"),
 };
 fourInARow(P.grid === "row");
+/**
+ * A run set up from the address (a seed, a state, a frozen moment, the bot, another camera, which
+ * changes where a click aims): for looking and for the tools. It never goes on the high score
+ * board, nor counts as this device's best.
+ */
+const practice = P.seed !== null || P.state !== null || P.freeze !== null || P.auto || P.view !== "player";
+/**
+ * The game's bot holds this page's gun (?auto=1). On the page alone that is the attract mode. In a
+ * battle it plays a seat only where the server has its test games on (a local test server: the
+ * kit's /config says `testGames`, as the party room's wall does), so ?auto=1 never plays anyone's
+ * seat in a real room.
+ */
+let auto = P.auto;
+/** True once the server has said its test games are on. */
+let serverTests = false;
+/** True when this page made or joined a room by itself for a test run (?auto=1 with host, join or screen). */
+let autoRoom = false;
 const SEAT_COLOURS = ["#c8382c", "#2f6f8f", "#d9a02a", "#3f7a4a"];
 const $ = (id) => document.getElementById(id);
 const coarse = matchMedia("(pointer: coarse)").matches;
@@ -55,8 +82,6 @@ const quality = P.quality ?? (coarse || Math.min(innerWidth, innerHeight) < 500 
 
 const sound = new Sound();
 const lens = new Lens($("stage"), { quality });
-/** A party room that mounted this page as one of its games, or null: the page on its own. */
-const host = findHost(params);
 const party = host ? new HostedParty(host) : new PartyClient({ lag: P.lag });
 /** Set when the host takes the page away: the frame loop stops and nothing more is drawn. */
 let disposed = false;
@@ -131,6 +156,9 @@ function statLine(r, sim) {
   return `${r.hits} hits from ${r.shots} corks (${aim}%), best run ${r.best}` + (sim ? `, ${done} of ${sim.taskDone.length} challenges` : "");
 }
 
+/** The run on the end card, as the board needs it to play it again: {seed, countIn, shots, v} (shared/run.js). */
+let cardRun = null;
+
 /** The end card's last word on a solo score, when there are no letters to ask for. */
 function scoreNote(score, newBest) {
   const best = scores.ownBest()?.score ?? score;
@@ -180,19 +208,25 @@ $("initials").addEventListener("submit", async (e) => {
   input.disabled = true;
   $("initials-ok").disabled = true;
   say.textContent = "Chalking it up";
-  const result = await scores.submit(name, score);
+  const result = cardRun && Number.isFinite(score) ? await scores.submit(name, cardRun) : { ok: false, error: "offline" };
   endShownAt = performance.now();
   if (!result.ok && (result.error === "bad_name" || result.error === "rate_limited")) {
+    // Either way the form stays open, for other letters or for another try in a while.
     say.textContent = result.error === "bad_name" ? "Not those three. Try three others." : "Too many scores from here just now. Try again in a few minutes.";
-    input.disabled = result.error !== "bad_name";
-    $("initials-ok").disabled = result.error !== "bad_name";
+    input.disabled = false;
+    $("initials-ok").disabled = false;
     if (result.error === "bad_name") input.focus();
     return;
   }
   form.hidden = true;
   input.blur();
   if (!result.ok) {
-    $("card-note").textContent = "The board could not be reached, so it is not chalked up. Your best on this device is kept.";
+    $("card-note").textContent =
+      result.error === "bad_request"
+        ? "This round could not be checked, so it is not chalked up."
+        : result.error === "already_chalked"
+          ? "This round is on the board already."
+          : "The board could not be reached, so it is not chalked up. Your best on this device is kept.";
     return;
   }
   scores.rememberInitials(name);
@@ -248,7 +282,9 @@ function makeViews(seats, mySeat) {
 function startLocal(kind, { countIn = COUNT_IN } = {}) {
   session?.dispose?.();
   mode = kind;
-  const seed = P.seed ?? (Math.random() * 2 ** 31) | 0;
+  // A run picks its own seed (any of 2^32); the high score board plays it again from that seed and
+  // the corks it fired (shared/run.js). ?seed= sets one for a practice run.
+  const seed = P.seed ?? Math.floor(Math.random() * 2 ** 32);
   const seats =
     kind === "four"
       ? ["Mabel", "Old Tom", "Fitch", "Dolly"].map((name, seat) => ({ seat, name, kind: "bot" }))
@@ -269,6 +305,8 @@ function startNet(msg) {
   // In a party room someone can arrive while a round is on: they have a seat in the room but
   // no stall in this round, and watch it as a shared screen does.
   if (host && !(msg.s ?? msg).seats.some((s) => s.seat === mySeat)) mySeat = -1;
+  // A room of the game's own: the bot plays a seat only where the room server has its test switches on.
+  if (!host && !serverTests) auto = false;
   session = new NetSession(party, msg.s ?? msg, mySeat);
   makeViews(session.seats, mySeat);
   endShownAt = null;
@@ -373,7 +411,7 @@ function aimFromPointer() {
 /** The first shot at the house's stall takes the gun: a click or a touch on the picture, or an aiming key. */
 function takeOver() {
   idleSince = performance.now();
-  if (mode === "attract" && !P.auto) {
+  if (mode === "attract" && !auto) {
     startLocal("solo", { countIn: 0 });
     sound.openingBell();
     return true;
@@ -382,7 +420,7 @@ function takeOver() {
 }
 
 function fire() {
-  if (!session || session.mySeat < 0 || P.auto) return;
+  if (!session || session.mySeat < 0 || auto) return;
   const mv = myView();
   if (!mv) return;
   const aim = aimFromPointer();
@@ -517,7 +555,7 @@ party.on("room", (room) => {
     startLocal("attract", { countIn: 1 });
     lobby.open();
   }
-  if (P.auto && (P.host || P.screen) && room.phase === "lobby" && !autoStart) {
+  if (autoRoom && (P.host || P.screen) && room.phase === "lobby" && !autoStart) {
     const humans = room.seats.filter((s) => s && s.kind === "human" && s.connected);
     // A short pause, so the full waiting room can be seen (and photographed) before the round.
     if (humans.length >= P.seats && room.canStart) autoStart = setTimeout(() => ((autoStart = null), party.start()), 3000);
@@ -532,7 +570,9 @@ party.on("closed", () => {
   if (mode === "battle") startLocal("attract");
 });
 
+/** A test run on a local test server: make or join a room by itself, get ready, and let the bot play. */
 async function autoBattle() {
+  autoRoom = true;
   try {
     if (P.screen) await party.create({ as: "screen" });
     else if (P.host) await party.create({ nickname: P.name ?? "Host" });
@@ -760,12 +800,12 @@ function hud() {
   const playing = mode === "solo" || (mode === "battle" && (session.mySeat >= 0 || session.seats.length === 1));
   // The house's stall with nobody at the gun is the start screen: the board with the three choices.
   // (With ?auto=1 the bot is the show, and the tally stays up for it.)
-  const start = mode === "attract" && !P.auto;
+  const start = mode === "attract" && !auto;
   document.body.dataset.screen = start ? "start" : mode;
   $("start").hidden = !start || !lobby.root.hidden;
   $("controls").hidden = start;
   // The end card says the score itself, and on a phone it needs the ticket's corner.
-  $("tally").hidden = (!playing && !(mode === "attract" && P.auto)) || !$("card").hidden;
+  $("tally").hidden = (!playing && !(mode === "attract" && auto)) || !$("card").hidden;
   $("battle-top").hidden = mode === "battle";
   showPointer();
   // The round's challenges, under the title. (Not on the start screen: there is nothing to do yet.)
@@ -873,7 +913,7 @@ function hudFrame(t) {
     if (wall > bannerUntil) $("banner").hidden = true;
   }
   const ret = $("reticle");
-  const show = pointer.seen && session.mySeat >= 0 && !P.auto && (mode === "solo" || mode === "battle") && endShownAt === null && lobby.root.hidden && (!pointer.touch || pointer.down);
+  const show = pointer.seen && session.mySeat >= 0 && !auto && (mode === "solo" || mode === "battle") && endShownAt === null && lobby.root.hidden && (!pointer.touch || pointer.down);
   ret.classList.toggle("on", show);
   if (show) {
     const lift = touchLift();
@@ -901,11 +941,16 @@ function showCard() {
     li.querySelector("small").textContent = statLine(r, session.sims[r.seat]);
     li.querySelector("b").textContent = r.score;
     list.appendChild(li);
-    if (mode === "solo") {
+    if (mode === "solo" && practice) {
+      // Set up from the address: nothing about it is kept, here or on the board.
+      note = "A practice run, set up from the address: it is not chalked up.";
+    } else if (mode === "solo") {
       const newBest = scores.keepOwnBest(r.score);
       if (!scores.reachable) assets.chalk.draw(scores.rows());
-      if (scores.makesBoard(r.score)) wantInitials = r.score;
-      else note = scoreNote(r.score, newBest);
+      if (scores.makesBoard(r.score)) {
+        wantInitials = r.score;
+        cardRun = { seed: session.seed, countIn: session.countIn, shots: session.shots, v: RUN_VERSION };
+      } else note = scoreNote(r.score, newBest);
     }
   } else {
     const win = rows[0];
@@ -983,7 +1028,7 @@ function frame(now) {
 
   if (session) {
     // Keys aim too: arrows move the aim, space fires.
-    if (keys.size && session.mySeat >= 0 && !P.auto) {
+    if (keys.size && session.mySeat >= 0 && !auto) {
       const step = 520 * dt;
       if (keys.has("ArrowLeft")) pointer.x -= step;
       if (keys.has("ArrowRight")) pointer.x += step;
@@ -994,8 +1039,8 @@ function frame(now) {
       pointer.seen = true;
       pointer.touch = false;
     }
-    if (P.auto && mode === "battle" && session.mySeat >= 0 && !session.ended) {
-      // ?auto=1 in a battle: the same bot the room uses plays this seat, through the same inputs.
+    if (auto && mode === "battle" && session.mySeat >= 0 && !session.ended) {
+      // ?auto=1 in a battle, where the room allows it (see `auto`): the same bot the room uses plays this seat, through the same inputs.
       botState.seed = session.seed;
       botState.stalls = session.sims;
       botState.startAt = session.startAt;
@@ -1020,7 +1065,7 @@ function frame(now) {
       const v = views[i];
       const sim = session.sims[v.seat];
       const t = session.seatTime(v.seat);
-      const human = v.seat === session.mySeat && !P.auto && mode !== "attract" && mode !== "four";
+      const human = v.seat === session.mySeat && !auto && mode !== "attract" && mode !== "four";
       if (human) {
         const aim = aimFromPointer();
         if (aim && pointer.seen && (!pointer.touch || pointer.down)) v.view.setAim(aim[0], aim[1]);
@@ -1059,7 +1104,7 @@ function frame(now) {
     if (mode === "four" && endShownAt !== null && performance.now() - endShownAt > 7000) startLocal("four");
     // Left alone on the end card, the house takes the stall back.
     if (mode === "solo" && endShownAt !== null && performance.now() - endShownAt > 25000) startLocal("attract", { countIn: 1 });
-    if (mode === "solo" && !P.auto && endShownAt === null && performance.now() - idleSince > 60000 && session.time() > 5) startLocal("attract", { countIn: 1 });
+    if (mode === "solo" && !auto && endShownAt === null && performance.now() - idleSince > 60000 && session.time() > 5) startLocal("attract", { countIn: 1 });
   }
   if (views.length) lens.render(views.map((v) => v.view), wall);
   govern(ms);
@@ -1117,8 +1162,15 @@ async function main() {
     hud();
     showCard();
   }
-  if (P.auto && (P.host || P.join || P.screen)) autoBattle();
-  else if (P.join) openLobby();
+  if (P.auto && (P.host || P.join || P.screen)) {
+    // Only where the server says its test games are on (PARTY_TEST_GAMES, the same switch that hangs
+    // the party room's test games); anywhere else the page is as anyone finds it.
+    party
+      .config()
+      .then((config) => (serverTests = config?.testGames === true))
+      .catch(() => false)
+      .then((tests) => (tests ? autoBattle() : P.join && openLobby()));
+  } else if (P.join) openLobby();
   else if (!P.auto && party.resume()) {
     // An earlier visit left a seat in a room: go back to it.
   }

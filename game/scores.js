@@ -16,6 +16,8 @@ export const HOUSE = [
 const API = "/api/party/scores/cork-and-bell";
 const BEST_KEY = "cork-and-bell:own-best";
 const SERVER_ROWS = 10;
+/** The refusals the end card words in its own way; anything else is the board out of reach. */
+const REFUSALS = new Set(["bad_name", "rate_limited", "bad_request", "already_chalked"]);
 
 export class Scores {
   constructor() {
@@ -51,12 +53,15 @@ export class Scores {
   }
 
   /**
-   * Sends a score. Answers {ok: true, place} (place -1: it did not make the board after all),
-   * {ok: false, error: "bad_name"} when the letters are refused, or {ok: false, error: "offline"}.
+   * Sends a run to be played again and chalked up: {seed, countIn, shots, v} (shared/run.js); the
+   * board works out the score itself. Answers {ok: true, place} (place -1: it did not make the
+   * board after all), or {ok: false, error}: "bad_name" (the letters are refused), "rate_limited",
+   * "bad_request" (the board could not check the run: it is not one its own code scores),
+   * "already_chalked" (this run is on the board already), or "offline" (no answer).
    */
-  async submit(name, score) {
+  async submit(name, { seed, countIn, shots, v }) {
     try {
-      const res = await fetch(API, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name, score }) });
+      const res = await fetch(API, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name, seed, countIn, shots, v }) });
       const body = await res.json().catch(() => null);
       if (body?.ok) {
         this.top = body.top;
@@ -64,7 +69,7 @@ export class Scores {
         this.onChange();
         return { ok: true, place: body.place };
       }
-      return { ok: false, error: body?.error === "bad_name" ? "bad_name" : body?.error === "rate_limited" ? "rate_limited" : "offline" };
+      return { ok: false, error: REFUSALS.has(body?.error) ? body.error : "offline" };
     } catch {
       return { ok: false, error: "offline" };
     }

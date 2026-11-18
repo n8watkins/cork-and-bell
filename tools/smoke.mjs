@@ -1,7 +1,7 @@
 // A quick look at the game's own page, small enough for Playwright's software renderer in WSL
 // (the playtests need the real graphics card to keep time): the start board, taking the gun,
-// firing, the end card with the high score entry, and that ?party=1 on a page nobody mounted
-// changes nothing. The browser is headless and muted and is closed whatever happens.
+// firing, an end card set up from the address (a practice card, with no high score entry), and
+// that ?party=1 on a page nobody mounted changes nothing. The browser is headless and muted and is closed whatever happens.
 // Run the local server first (npm run dev), then: node tools/smoke.mjs [--base=...]
 import { BASE, openBrowser } from "./browser.mjs";
 
@@ -56,8 +56,9 @@ try {
 
   const end = await open("&state=end&score=99999");
   await end.waitForSelector("#card:not([hidden])", { timeout: 30000 });
-  const card = await end.evaluate(() => ({ title: document.getElementById("card-title").textContent, form: !document.getElementById("initials").hidden, again: document.getElementById("again").textContent }));
-  check(card.form && card.again === "Play again", `the end card asks for three letters for the high score board ("${card.title}")`);
+  const card = await end.evaluate(() => ({ title: document.getElementById("card-title").textContent, form: !document.getElementById("initials").hidden, note: document.getElementById("card-note").textContent, again: document.getElementById("again").textContent }));
+  // A card set up from the address is a practice card: nothing on it may go on the board.
+  check(!card.form && /practice/i.test(card.note) && card.again === "Play again", `the end card set up from the address offers no high score entry ("${card.title}": "${card.note}")`);
   const board = await end.request.get(new URL("/api/party/scores/cork-and-bell", base).href);
   check(board.ok() && Array.isArray((await board.json()).top), "the high score board answers");
   await end.close();

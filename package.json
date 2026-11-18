@@ -28,6 +28,7 @@
     "assets:list": "node scripts/build-public.mjs --list",
     "deploy": "wrangler deploy --env=''",
     "test": "vitest run",
+    "test:engines": "node tools/engines.mjs",
     "playtest": "node tools/playtest.mjs",
     "playtest:battle": "node tools/playtest-battle.mjs",
     "test:room": "node node_modules/n8-party-games/party-kit/test/e2e-room.mjs",
@@ -36,7 +37,7 @@
     "fps": "node tools/gpu-fps.mjs"
   },
   "devDependencies": {
-    "n8-party-games": "github:n8watkins/n8-party-games#07acfe723476e752a8dae5458d14a9240ef4e862",
+    "n8-party-games": "github:n8watkins/n8-party-games#c9b5f4e4794f42477fa1f4aab5e5a9209c67b44a",
     "playwright": "^1.64.1",
     "three": "^0.186.0",
     "vitest": "4.1",

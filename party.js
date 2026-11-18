@@ -8,6 +8,13 @@ import { MAX_ROUND_SCORE } from "./game/shared/battle.js";
 /** The server game definition, for the kit's createPartyRoom(game). */
 export { game } from "./game/shared/battle.js";
 
+/**
+ * For the host's high score board: plays a solo run again and gives its score, or null. The board
+ * hands each run its seed and chalks up only what this gives (the kit's "scores", `scoreRun`), so
+ * a score a page makes up, or a run on a seed of its own choosing, never reaches the board.
+ */
+export { scoreRun } from "./game/shared/run.js";
+
 export const manifest = {
   id: "cork-and-bell",
   name: "Cork & Bell",
