@@ -20,11 +20,12 @@
 const PAGE = new URL("../", import.meta.url);
 
 /** The test switches a party room's test run may ask for, as cork-<name> on the room's address. */
-const SWITCHES = ["auto", "quality", "grid"];
+const SWITCHES = ["auto", "quality", "grid", "round"];
 
 /**
  * The test switches a run asks for on the room's address (cork-auto=1: the game's bot plays this
- * seat; cork-quality=low|high; cork-grid=row), handed to the game's page as a query string
+ * seat; cork-quality=low|high; cork-grid=row; cork-round=<seconds>: a short round, see mount),
+ * handed to the game's page as a query string
  * (`partyHost.switches`), never on its address. Only where the room has its test games on: the
  * server hangs a test box on the wall (`test: true`) only where its test games are on, never in
  * production, so there anyone adding ?cork-auto=1 to the address gets nothing.
@@ -98,6 +99,14 @@ export function mount(container, { room, you, snapshot, send, now, inset = {}, p
   // A host's test run can ask for the bot to play this seat, or for a quality: ?cork-auto=1,
   // ?cork-quality=low, ?cork-grid=row on the host's address (or in ctx.params), where its test games are on.
   frame.partyHost.switches = switchesFor(room, params ?? new URLSearchParams(doc.defaultView?.location.search ?? ""));
+  // A test switch (cork-round=<seconds>): a player's view asks the room for a short round as it
+  // mounts, in the count-in, before the game's page has loaded (which can take longer than the
+  // count-in in a browser that draws in software). Only a room made by testGame takes it, in the
+  // count-in, once (battle.js, takeRound); the switch itself only reaches here where the room's
+  // test games are on (switchesFor). The room decides which lengths it takes (testRound).
+  const asked = new URLSearchParams(frame.partyHost.switches);
+  const round = Number(asked.get("round"));
+  if (you?.role === "player" && asked.has("round") && Number.isInteger(round)) send({ round });
   const address = new URL(PAGE);
   address.searchParams.set("party", "1");
   frame.src = address.href;

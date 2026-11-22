@@ -10,12 +10,14 @@ export const REMOTE_DELAY = 0.45;
 
 export class LocalSession {
   /**
-   * @param {{seed: number, seats: Array<{seat:number,name:string,kind:string}>, mySeat?: number, countIn?: number, botSkill?: number}} opts
+   * @param {{seed: number, seats: Array<{seat:number,name:string,kind:string}>, mySeat?: number, countIn?: number, botSkill?: number, roundSeconds?: number}} opts
+   *   roundSeconds: a short round (the page's ?round= switch, which makes the run a practice run)
    */
-  constructor({ seed, seats, mySeat = 0, countIn = COUNT_IN, botSkill = 1 }) {
+  constructor({ seed, seats, mySeat = 0, countIn = COUNT_IN, botSkill = 1, roundSeconds = ROUND_SECONDS }) {
     this.kind = "local";
     this.now = 0;
-    this.state = createBattle({ seed, seats, now: (countIn - COUNT_IN) * 1000, delay: 0, botSkill });
+    this.state = createBattle({ seed, seats, now: (countIn - COUNT_IN) * 1000, delay: 0, botSkill, roundSeconds });
+    this.roundSeconds = roundSeconds;
     this.state.keep = true;
     for (const s of seats) this.state.stalls[s.seat].t = -countIn;
     this.seats = this.state.seats;
@@ -43,7 +45,7 @@ export class LocalSession {
     const t = this.time();
     // No cork still waiting for its step (sim.pending): a second one could be one the door refuses,
     // and the run the high score board plays again (`shots`) must hold only corks the stall took.
-    return t >= 0 && t < ROUND_SECONDS && !sim.over && sim.corksLeft > 0 && sim.pending.length === 0 && t - sim.lastFire >= COCK_SECONDS - 0.02 && this.state.endAt === null;
+    return t >= 0 && t < this.roundSeconds && !sim.over && sim.corksLeft > 0 && sim.pending.length === 0 && t - sim.lastFire >= COCK_SECONDS - 0.02 && this.state.endAt === null;
   }
 
   fire(ax, ay) {
@@ -126,10 +128,20 @@ export class NetSession {
         else sim.t = -COUNT_IN - 1;
         this.sims[s.seat] = sim;
       });
+    }
+    // When time is called, as the room says (a room that does not say: the full round).
+    this.setRound(snap.roundSeconds);
+    if (rebuild) {
       this.attacks = snap.attacks.map((a) => ({ ...a }));
       this.ended = !!snap.ended;
       this.rebuilt = true;
     }
+  }
+
+  /** The room's round length (a snapshot's `roundSeconds`, or its {k: "round"} event in a test run's short round), on every stall. */
+  setRound(seconds) {
+    this.roundSeconds = Number.isFinite(seconds) && seconds > 0 ? seconds : ROUND_SECONDS;
+    for (const sim of Object.values(this.sims)) sim.roundSeconds = this.roundSeconds;
   }
 
   time() {
@@ -144,7 +156,7 @@ export class NetSession {
     const sim = this.sims[this.mySeat];
     if (!sim) return false;
     const t = this.time();
-    return t >= 0 && t < ROUND_SECONDS && !this.ended && !sim.over && sim.corksLeft > 0 && t - sim.lastFire >= COCK_SECONDS - 0.02;
+    return t >= 0 && t < this.roundSeconds && !this.ended && !sim.over && sim.corksLeft > 0 && t - sim.lastFire >= COCK_SECONDS - 0.02;
   }
 
   /** Aim and fire, with the room's clock. The room decides what it hit; the picture shows it at once. */
@@ -176,6 +188,7 @@ export class NetSession {
           atk.done = true;
         }
       } else if (e.k === "time") this.ended = true;
+      else if (e.k === "round") this.setRound(e.s);
       out.push(e);
     }
     for (const s of this.seats) {
@@ -208,6 +221,7 @@ export class NetSession {
   check(snap) {
     if (snap.round !== this.round || snap.startAt !== this.startAt) return this.adopt(snap, true);
     if (snap.ended) this.ended = true;
+    this.setRound(snap.roundSeconds);
     snap.seats.forEach((s, i) => {
       const sim = this.sims[s.seat];
       const theirs = snap.stalls[i];

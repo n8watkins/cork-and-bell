@@ -1,10 +1,10 @@
 // Cork & Bell: boot, modes, input, the frame loop and the HUD.
 //
-// URL switches. Any run set up by one (seed, t, state, auto, or a view other than the player's,
-// which changes where a click aims) is a practice run: it never goes on the high score board, nor
-// counts as this device's best. In a party room the page reads none of them from its address: the
-// room hands over cork-auto, cork-quality and cork-grid, and only where its test games are on
-// (party-view.js).
+// URL switches. Any run set up by one (seed, t, state, auto, round, or a view other than the
+// player's, which changes where a click aims) is a practice run: it never goes on the high score
+// board, nor counts as this device's best. In a party room the page reads none of them from its
+// address: the room hands over cork-auto, cork-quality, cork-grid and cork-round, and only where
+// its test games are on (party-view.js).
 //   ?auto=1          a bot plays (this is also the attract mode); in a battle it plays this seat,
 //                    only where the server has its test games on (a local test server: /config's testGames)
 //   ?seed=<n>        a repeatable solo run
@@ -18,7 +18,10 @@
 //   ?lag=<ms>        simulated latency each way (local test rooms only)
 //   ?quality=low|high
 //   ?grid=row        four stalls in one row on a shared screen (the default is two rows of two)
-//   ?party=1         hosted mode: only inside the frame a party room mounts (party-view.js, hosted.js)
+//   ?round=<s>       a short round, s whole seconds (20 to 90: battle.js, testRound), for the test tools.
+//                    In a party room (cork-round) it is the room that takes it, and only where its test
+//                    games are on (battle.js, testGame); the page runs to the room's round length.
+//   ?party=1        hosted mode: only inside the frame a party room mounts (party-view.js, hosted.js)
 import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { HDRLoader } from "three/addons/loaders/HDRLoader.js";
@@ -28,7 +31,7 @@ import { Sound, buzz } from "./audio.js";
 import { HostedParty, findHost } from "./hosted.js";
 import { Scores } from "./scores.js";
 import { LocalSession, NetSession } from "./session.js";
-import { ATTACK_NAMES, COUNT_IN, game } from "./shared/battle.js";
+import { ATTACK_NAMES, COUNT_IN, game, testRound } from "./shared/battle.js";
 import { COUNTER, TRAY } from "./shared/layout.js";
 import { RUN_VERSION } from "./shared/run.js";
 import { BELL_FULL, COCK_SECONDS, CORKS_PER_ROUND, RICOCHET_TIMES, ROUND_SECONDS, StallSim, TASKS, mech, speedAt } from "./shared/sim.js";
@@ -56,14 +59,18 @@ const P = {
   lag: num("lag", 0),
   quality: params.get("quality"),
   grid: params.get("grid"),
+  /** A short round for this page's own rounds (LocalSession): null, or a length testRound allows. */
+  round: testRound(num("round", null)),
 };
 fourInARow(P.grid === "row");
 /**
- * A run set up from the address (a seed, a state, a frozen moment, the bot, another camera, which
- * changes where a click aims): for looking and for the tools. It never goes on the high score
- * board, nor counts as this device's best.
+ * A run set up from the address (a seed, a state, a frozen moment, the bot, a round length,
+ * another camera, which changes where a click aims): for looking and for the tools. It never goes
+ * on the high score board, nor counts as this device's best. (Any ?round= at all, taken or not.)
  */
-const practice = P.seed !== null || P.state !== null || P.freeze !== null || P.auto || P.view !== "player";
+const practice = P.seed !== null || P.state !== null || P.freeze !== null || P.auto || P.view !== "player" || params.has("round");
+/** When time is called in the round on show: the room's word in a battle, this page's own (?round=) in its own rounds. */
+const roundLength = () => session?.roundSeconds ?? ROUND_SECONDS;
 /**
  * The game's bot holds this page's gun (?auto=1). On the page alone that is the attract mode. In a
  * battle it plays a seat only where the server has its test games on (a local test server: the
@@ -289,7 +296,7 @@ function startLocal(kind, { countIn = COUNT_IN } = {}) {
     kind === "four"
       ? ["Mabel", "Old Tom", "Fitch", "Dolly"].map((name, seat) => ({ seat, name, kind: "bot" }))
       : [{ seat: 0, name: kind === "solo" ? "You" : "The house", kind: kind === "solo" ? "human" : "bot" }];
-  session = new LocalSession({ seed, seats, mySeat: kind === "four" ? -1 : 0, countIn, botSkill: kind === "four" ? 0.75 : 0.95 });
+  session = new LocalSession({ seed, seats, mySeat: kind === "four" ? -1 : 0, countIn, botSkill: kind === "four" ? 0.75 : 0.95, ...(P.round !== null && { roundSeconds: P.round }) });
   makeViews(seats, kind === "four" ? -1 : 0);
   endShownAt = null;
   lastTime = -99;
@@ -674,7 +681,7 @@ function onEvent(e) {
         }
         if (e.rung) session.bellCalled = false;
         // The bell in the last second of the round: last orders.
-        if (e.target === "bell" && e.t >= ROUND_SECONDS - 1) {
+        if (e.target === "bell" && e.t >= roundLength() - 1) {
           showBanner("Last orders!", "The bell, right on time.", { good: true, seconds: 2.4 });
           sound.lastOrders();
           if (v) {
@@ -790,7 +797,7 @@ function landIncoming() {
 // ------------------------------------------------------------------ the HUD
 
 function fmtTime(t) {
-  const left = Math.max(0, Math.ceil(ROUND_SECONDS - Math.max(0, t)));
+  const left = Math.max(0, Math.ceil(roundLength() - Math.max(0, t)));
   return `${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}`;
 }
 
@@ -859,7 +866,7 @@ function hud() {
 function hudFrame(t) {
   const sim = session.sims[session.mySeat >= 0 ? session.mySeat : session.seats[0].seat];
   $("time").textContent = fmtTime(t);
-  $("time-cell").classList.toggle("late", t > ROUND_SECONDS - 10 && t < ROUND_SECONDS);
+  $("time-cell").classList.toggle("late", t > roundLength() - 10 && t < roundLength());
   $("score").textContent = sim.score;
   $("run").textContent = sim.streak;
   $("run-cell").classList.toggle("hot", sim.streak >= 4);
@@ -1044,6 +1051,7 @@ function frame(now) {
       botState.seed = session.seed;
       botState.stalls = session.sims;
       botState.startAt = session.startAt;
+      botState.roundSeconds = session.roundSeconds;
       if (botState.round !== session.startAt) {
         botState.round = session.startAt;
         botState.bots = {};
@@ -1088,7 +1096,8 @@ function frame(now) {
       sound.flywheel(speedAt(tMine));
     }
     // The last five seconds are counted out, as a cabinet hurries its player.
-    if (!frozen && mode !== "attract" && tMine >= ROUND_SECONDS - 5 && tMine < ROUND_SECONDS && Math.floor(tMine) !== Math.floor(lastTime)) sound.countTick(Math.floor(tMine) === ROUND_SECONDS - 1);
+    const len = roundLength();
+    if (!frozen && mode !== "attract" && tMine >= len - 5 && tMine < len && Math.floor(tMine) !== Math.floor(lastTime)) sound.countTick(Math.floor(tMine) === len - 1);
     hudFrame(tMine);
     lastTime = tMine;
 
@@ -1133,7 +1142,7 @@ async function main() {
   else startLocal(P.auto || !P.state || P.state === "end" || P.state === "last" ? "attract" : "solo", { countIn: P.state ? 0 : 1 });
   if (P.state === "last") session.advance(72 + session.time() * -1);
   if (P.state === "end") {
-    session.advance(ROUND_SECONDS + 2 - session.time());
+    session.advance(roundLength() + 2 - session.time());
     if (P.score !== null) {
       session.sims[0].score = P.score;
       await scores.load(); // the tools want the entry form at once, not on the next round
@@ -1253,7 +1262,7 @@ function begin() {
     },
     summary() {
       if (!session) return null;
-      return { mode, t: Math.round(session.time() * 100) / 100, over: session.over, round: session.round ?? 1, phase: party.room?.phase ?? null, mySeat: session.mySeat, stalls: session.seats.map((s) => ({ name: s.name, ...session.sims[s.seat].summary() })) };
+      return { mode, t: Math.round(session.time() * 100) / 100, roundSeconds: roundLength(), over: session.over, round: session.round ?? 1, phase: party.room?.phase ?? null, mySeat: session.mySeat, stalls: session.seats.map((s) => ({ name: s.name, ...session.sims[s.seat].summary() })) };
     },
   };
 }

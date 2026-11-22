@@ -41,6 +41,10 @@ const STEP_MS = 1000 / 60;
 export function scoreRun(run) {
   const { seed, countIn, shots, v } = run ?? {};
   if (v !== RUN_VERSION) return null;
+  // A board run is always a full round: it is played again on ROUND_SECONDS, whatever it says. A
+  // short round (a test run's ?round=) is a practice run, whose page never sends it; one that names
+  // a round length anyway (`round` or `roundSeconds`) is not a run a page sends, and is refused.
+  if (run.round !== undefined || run.roundSeconds !== undefined) return null;
   if (!Number.isInteger(seed) || seed < 0 || seed > 0xffffffff) return null;
   if (typeof countIn !== "number" || !Number.isFinite(countIn) || countIn < 0 || countIn > COUNT_IN) return null;
   if (!Array.isArray(shots) || shots.length > MAX_RUN_SHOTS) return null;
@@ -51,7 +55,7 @@ export function scoreRun(run) {
     last = shot[0];
   }
   // As LocalSession builds a solo round: one human seat, no delay, the count-in it started with.
-  const state = createBattle({ seed, seats: [{ seat: 0, name: "", kind: "human" }], now: (countIn - COUNT_IN) * 1000, delay: 0 });
+  const state = createBattle({ seed, seats: [{ seat: 0, name: "", kind: "human" }], now: (countIn - COUNT_IN) * 1000, delay: 0, roundSeconds: ROUND_SECONDS });
   state.stalls[0].t = -countIn;
   // The stall steps in fixed steps whatever the ticks, so ticking at each cork's moment is ticking as the page did.
   for (const [now, ax, ay] of shots) {

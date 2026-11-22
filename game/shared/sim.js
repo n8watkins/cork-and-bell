@@ -236,6 +236,13 @@ export class StallSim {
     this.firedQ = [];
     this.events = [];
     this.over = false;
+    /**
+     * When time is called on this stall: ROUND_SECONDS, always, but in a party site's test run,
+     * which may ask for a short round (battle.js, testGame). Only the time call moves: the machine
+     * speeds up (mech, speedAt) on the full round's clock, so a short round is the full round's
+     * opening seconds, cut off.
+     */
+    this.roundSeconds = ROUND_SECONDS;
   }
 
   get jammed() {
@@ -244,7 +251,7 @@ export class StallSim {
 
   /** True while the round is on and the stall may score. */
   get live() {
-    return this.t >= 0 && this.t < ROUND_SECONDS && !this.over;
+    return this.t >= 0 && this.t < this.roundSeconds && !this.over;
   }
 
   /**
@@ -287,7 +294,7 @@ export class StallSim {
   }
 
   doFire(shot) {
-    if (this.t < 0 || this.t >= ROUND_SECONDS || this.over) return this.refuse(shot, this.t < 0 ? "early" : "late");
+    if (this.t < 0 || this.t >= this.roundSeconds || this.over) return this.refuse(shot, this.t < 0 ? "early" : "late");
     const want = shot.want ?? this.t;
     // A room judges by stamps moved by the least lag seen so far, which can fall a little between
     // two corks as the connection settles: that much slack (up to ARRIVAL_SLACK), and no more.

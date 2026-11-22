@@ -52,11 +52,15 @@ An upright phone still plays, with its own framing and a hint to turn it.
 | `?join=4821` | The lobby with a PIN filled in (this is what the QR code opens). |
 | `?quality=low` or `high` | Lens and shadow quality (phones start on low). |
 | `?grid=row` | With four stalls on a shared screen: one row of four upright stalls instead of two rows of two. |
+| `?round=20` | A short round for the test tools: time is called after that many whole seconds (20 to 90). The machine still speeds up on the full round's clock, so it is the full round's opening, cut off. |
 
-A run set up by `seed`, `t`, `state`, `auto` or a `view` other than the player's (which changes where a click aims) is a practice run: it never goes on the high score board and never counts as this device's best.
+A run set up by `seed`, `t`, `state`, `auto`, `round` or a `view` other than the player's (which changes where a click aims) is a practice run: it never goes on the high score board and never counts as this device's best.
+The board also refuses any run that names a round length (`game/shared/run.js`): it replays every run on the full 90 seconds.
 
 In a party room the game's page reads none of these from its own address.
-The room hands it `cork-auto`, `cork-quality` and `cork-grid` from the room's address, and only where the room has its test games on (`game/party-view.js`), never in production.
+The room hands it `cork-auto`, `cork-quality`, `cork-grid` and `cork-round` from the room's address, and only where the room has its test games on (`game/party-view.js`), never in production.
+`cork-round=<s>` is the room's to take, not the page's: a player's view asks for it as it mounts (`{round: s}`), and only `testGame` (exported by `party.js` for a host's test wall) takes it, in the count-in, once; production's `game` ignores it.
+The room then tells every page (`{k: "round", s}`) and every snapshot carries `roundSeconds`, so the pages, the bot and the room call time together (`test/short-round.test.js`).
 
 ### What the high score board proves
 

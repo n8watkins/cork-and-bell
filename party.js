@@ -7,6 +7,11 @@ import { MAX_ROUND_SCORE } from "./game/shared/battle.js";
 
 /** The server game definition, for the kit's createPartyRoom(game). */
 export { game } from "./game/shared/battle.js";
+/**
+ * The same game for a host's test runs only (a room whose test games are on, never production):
+ * its battles take a test run's short round ({round: s}, from the cork-round switch).
+ */
+export { testGame } from "./game/shared/battle.js";
 
 /**
  * For the host's high score board: plays a solo run again and gives its score, or null. The board

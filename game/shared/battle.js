@@ -5,6 +5,8 @@
 // Inputs (never results):  {f: [at, ax, ay], q}  fire at round time `at`, aiming at (ax, ay) on the front row's plane;
 //                                             `q` (optional) numbers the page's corks 1, 2, 3 ... in a round
 //                          {pick: seat}       choose which rival your attacks go to (-1: the leader)
+//                          {round: s}         a test run's short round, s seconds: only testGame takes it,
+//                                             in the count-in (see takeRound); `game` ignores it
 //
 // A page's numbered cork is one cork from end to end: the room carries its `q` on the shot
 // waiting, on the cork, in its "fire" event, in the relay ({k: "f"}) and in snapshots (the corks
@@ -36,6 +38,12 @@ export const MOTHS_SECONDS = 4;
 export const DARK_SECONDS = 3;
 export const END_HOLD = 1.2;
 export const ATTACK_NAMES = { jam: "a jammed cork", moths: "a swarm of moths", dark: "a blackout" };
+/**
+ * A test run's short round, in whole seconds (`{round: s}`, see testRound): never shorter than
+ * this, nor longer than the full round. Only a room made by `testGame` takes it.
+ */
+export const TEST_ROUND_MIN = 20;
+export const TEST_ROUND_MAX = ROUND_SECONDS;
 
 function hash(a, b) {
   let h = Math.imul(a ^ 0x9e3779b9, 0x85ebca6b) ^ Math.imul(b + 0x7f4a7c15, 0xc2b2ae35);
@@ -49,12 +57,19 @@ export function roundTime(state, now) {
   return (now - state.startAt) / 1000 - COUNT_IN;
 }
 
-export function createBattle({ seed, seats, now, round = 1, delay = SIM_DELAY, botSkill = 0.75 }) {
+/**
+ * `roundSeconds` is when time is called: ROUND_SECONDS but in a test run's short round (a
+ * LocalSession on the game's own page with ?round=, which is always a practice run, or a room made
+ * by testGame that took `{round: s}`). The room's battle code never takes it from ctx: a room
+ * made by the production `game` is always ROUND_SECONDS.
+ */
+export function createBattle({ seed, seats, now, round = 1, delay = SIM_DELAY, botSkill = 0.75, roundSeconds = ROUND_SECONDS }) {
   const state = {
     seed: seed >>> 0,
     round,
     startAt: now,
     delay,
+    roundSeconds,
     seats: seats.map((s) => ({ seat: s.seat, name: s.name, kind: s.kind })),
     stalls: {},
     picks: {},
@@ -76,9 +91,15 @@ export function createBattle({ seed, seats, now, round = 1, delay = SIM_DELAY, b
   for (const s of seats) {
     const sim = new StallSim(state.seed, s.seat);
     sim.t = -COUNT_IN - delay;
+    sim.roundSeconds = roundSeconds;
     state.stalls[s.seat] = sim;
   }
   return state;
+}
+
+/** A round length a test run may ask for: a whole number of seconds from TEST_ROUND_MIN to TEST_ROUND_MAX, or null. */
+export function testRound(value) {
+  return Number.isInteger(value) && value >= TEST_ROUND_MIN && value <= TEST_ROUND_MAX ? value : null;
 }
 
 /** Gaps waited for longer than GAP_MS, or beyond MAX_GAPS, are given up: a cork that comes after that is refused. */
@@ -126,7 +147,7 @@ export function cockedFor(sim, at) {
   let left = sim.corksLeft;
   for (const { shot, k } of order) {
     const t = sim.t + k * DT;
-    if (sim.over || t < 0 || t >= ROUND_SECONDS || left <= 0) continue;
+    if (sim.over || t < 0 || t >= sim.roundSeconds || left <= 0) continue;
     const want = shot.want ?? t;
     if (want - last < COCK_SECONDS - 0.02 - (shot.slack ?? 0)) continue;
     last = want;
@@ -192,6 +213,12 @@ export function landAttacks(attacks, sim, upTo) {
   }
 }
 
+/** What a room's create() passes on: everything but a round length, which a room only takes as a test run's {round: s}. */
+function roomCtx(ctx) {
+  const { roundSeconds, ...rest } = ctx ?? {};
+  return rest;
+}
+
 export const game = {
   id: "cork-and-bell",
   minSeats: 2,
@@ -200,7 +227,7 @@ export const game = {
   snapshotEvery: 15,
 
   create(ctx) {
-    return createBattle(ctx);
+    return createBattle(roomCtx(ctx));
   },
 
   input(state, seat, data, now) {
@@ -263,7 +290,7 @@ export const game = {
   bot(state, seat, now) {
     const sim = state.stalls[seat];
     const t = roundTime(state, now) - state.delay;
-    if (!sim || t < 0.4 || t >= ROUND_SECONDS || sim.over || sim.corksLeft <= 0) return [];
+    if (!sim || t < 0.4 || t >= (state.roundSeconds ?? ROUND_SECONDS) || sim.over || sim.corksLeft <= 0) return [];
     const b = (state.bots[seat] ??= { next: 0.5 + hash(state.seed, seat * 977) * 0.8, n: 0 });
     if (t < b.next) return [];
     const r = (k) => hash(state.seed ^ (seat * 7919), b.n * 16 + k);
@@ -336,7 +363,7 @@ export const game = {
       if (state.keep) for (const e of sim.events) state.simEvents.push(e);
       sim.events.length = 0;
       // Out of corks, and the last one has come to rest: this stall has stopped scoring.
-      if (!sim.over && sim.corksLeft <= 0 && sim.corks.length === 0 && sim.pending.length === 0 && t < ROUND_SECONDS) {
+      if (!sim.over && sim.corksLeft <= 0 && sim.corks.length === 0 && sim.pending.length === 0 && t < state.roundSeconds) {
         sim.over = true;
         state.out.push({ k: "out", seat: s.seat, t });
       }
@@ -348,7 +375,7 @@ export const game = {
       // dead-centre hit can still give a cork back. A stall that never fires its corks (an idle
       // or gone player) is not out, and the round runs to the time call for it.
       const allOut = state.seats.every((s) => state.stalls[s.seat].over);
-      if (t >= ROUND_SECONDS || allOut) {
+      if (t >= state.roundSeconds || allOut) {
         state.endAt = t;
         state.out.push({ k: "time", t });
       }
@@ -366,6 +393,9 @@ export const game = {
       seed: state.seed,
       round: state.round,
       delay: state.delay,
+      // When time is called (ROUND_SECONDS, or a test run's short round): every page, its bot and
+      // the room run to the same clock. In every snapshot, the first included.
+      roundSeconds: state.roundSeconds,
       seats: state.seats,
       picks: state.picks,
       ended: state.endAt !== null,
@@ -387,6 +417,42 @@ export const game = {
 
   result(state) {
     return standings(state.seats, (seat) => state.stalls[seat]);
+  },
+};
+
+/**
+ * A test run asks for a short round ({round: s}, from party-view.js's cork-round switch): taken
+ * only by a room made by testGame (`state.tests`), only before the opening bell, only once, and
+ * only a length testRound allows. Everyone is told ({k: "round", s}), and every snapshot carries
+ * it (`roundSeconds`).
+ */
+function takeRound(state, value, now) {
+  const s = testRound(value);
+  if (state.tests !== true || state.roundTaken || s === null || roundTime(state, now) >= 0) return;
+  state.roundTaken = true;
+  state.roundSeconds = s;
+  for (const seat of state.seats) state.stalls[seat.seat].roundSeconds = s;
+  state.out.push({ k: "round", s });
+}
+
+/**
+ * The same game for a party site's test runs only: a room whose test games are on (the party
+ * site's test wall, where PARTY_TEST_GAMES is "on") runs this, and only this takes a test run's
+ * short round ({round: s}, takeRound). Production's wall runs `game`, whose input never reads it.
+ */
+export const testGame = {
+  ...game,
+  create(ctx) {
+    const state = createBattle(roomCtx(ctx));
+    state.tests = true;
+    return state;
+  },
+  input(state, seat, data, now) {
+    if (data && typeof data === "object" && "round" in data && !("f" in data) && !("pick" in data)) {
+      if (state.stalls[seat]) takeRound(state, data.round, now);
+      return;
+    }
+    return game.input(state, seat, data, now);
   },
 };
 
