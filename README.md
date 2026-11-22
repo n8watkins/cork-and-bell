@@ -59,7 +59,8 @@ The board also refuses any run that names a round length (`game/shared/run.js`):
 
 In a party room the game's page reads none of these from its own address.
 The room hands it `cork-auto`, `cork-quality`, `cork-grid` and `cork-round` from the room's address, and only where the room has its test games on (`game/party-view.js`), never in production.
-`cork-round=<s>` is the room's to take, not the page's: a player's view asks for it as it mounts (`{round: s}`), and only `testGame` (exported by `party.js` for a host's test wall) takes it, in the count-in, once; production's `game` ignores it.
+`cork-round=<s>` is the room's to take, not the page's: a player's view asks for it as it mounts (`{round: s}`), and only `testGame` (exported by `party.js` for a host's test wall) takes it; production's `game` ignores it.
+`testGame` only ever shortens a round, to 20 to 90 whole seconds, and only to a time call at least a second ahead of the room's clock and before time is called; so a test can also cut a round short over its own socket once what it checks mid-round is done (`{t: "in", d: {round: s}}`), as the party site's gate does.
 The room then tells every page (`{k: "round", s}`) and every snapshot carries `roundSeconds`, so the pages, the bot and the room call time together (`test/short-round.test.js`).
 
 ### What the high score board proves

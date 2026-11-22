@@ -5,8 +5,8 @@
 // Inputs (never results):  {f: [at, ax, ay], q}  fire at round time `at`, aiming at (ax, ay) on the front row's plane;
 //                                             `q` (optional) numbers the page's corks 1, 2, 3 ... in a round
 //                          {pick: seat}       choose which rival your attacks go to (-1: the leader)
-//                          {round: s}         a test run's short round, s seconds: only testGame takes it,
-//                                             in the count-in (see takeRound); `game` ignores it
+//                          {round: s}         a test run's short round, s seconds: only testGame takes it
+//                                             (see takeRound); `game` ignores it
 //
 // A page's numbered cork is one cork from end to end: the room carries its `q` on the shot
 // waiting, on the cork, in its "fire" event, in the relay ({k: "f"}) and in snapshots (the corks
@@ -420,16 +420,20 @@ export const game = {
   },
 };
 
+/** How far ahead of the room's clock a test run's time call must be when it is asked for, in seconds. */
+export const TEST_ROUND_AHEAD = 1;
+
 /**
- * A test run asks for a short round ({round: s}, from party-view.js's cork-round switch): taken
- * only by a room made by testGame (`state.tests`), only before the opening bell, only once, and
- * only a length testRound allows. Everyone is told ({k: "round", s}), and every snapshot carries
- * it (`roundSeconds`).
+ * A test run asks for a short round ({round: s}: from party-view.js's cork-round switch as the
+ * view mounts, or from a test's own socket once what it checks mid-round is done). Taken only by a
+ * room made by testGame (`state.tests`), only a length testRound allows, only shorter than the
+ * round is now, only before time is called, and only at least TEST_ROUND_AHEAD seconds ahead of the
+ * room's clock (so no page, nor the room's stalls, has passed it yet). Everyone is told
+ * ({k: "round", s}), and every snapshot carries it (`roundSeconds`).
  */
 function takeRound(state, value, now) {
   const s = testRound(value);
-  if (state.tests !== true || state.roundTaken || s === null || roundTime(state, now) >= 0) return;
-  state.roundTaken = true;
+  if (state.tests !== true || s === null || s >= state.roundSeconds || state.endAt !== null || s < roundTime(state, now) + TEST_ROUND_AHEAD) return;
   state.roundSeconds = s;
   for (const seat of state.seats) state.stalls[seat.seat].roundSeconds = s;
   state.out.push({ k: "round", s });

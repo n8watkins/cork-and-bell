@@ -101,9 +101,9 @@ export function mount(container, { room, you, snapshot, send, now, inset = {}, p
   frame.partyHost.switches = switchesFor(room, params ?? new URLSearchParams(doc.defaultView?.location.search ?? ""));
   // A test switch (cork-round=<seconds>): a player's view asks the room for a short round as it
   // mounts, in the count-in, before the game's page has loaded (which can take longer than the
-  // count-in in a browser that draws in software). Only a room made by testGame takes it, in the
-  // count-in, once (battle.js, takeRound); the switch itself only reaches here where the room's
-  // test games are on (switchesFor). The room decides which lengths it takes (testRound).
+  // count-in in a browser that draws in software). Only a room made by testGame takes it
+  // (battle.js, takeRound, which decides the lengths it takes); the switch itself only reaches
+  // here where the room's test games are on (switchesFor).
   const asked = new URLSearchParams(frame.partyHost.switches);
   const round = Number(asked.get("round"));
   if (you?.role === "player" && asked.has("round") && Number.isInteger(round)) send({ round });

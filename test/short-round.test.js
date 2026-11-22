@@ -18,6 +18,8 @@ const SEATS = [
 ];
 /** A moment in the count-in, on the room's clock (ms), for a battle started at 0. */
 const COUNTING = 500;
+/** Half a second before a twenty-second round's time call, on the room's clock (ms). */
+const at20 = () => (COUNT_IN + 19.5) * 1000;
 
 /** Ticks a battle to its end the way a room does, bots firing for every seat; returns every event. */
 function play(definition, state, from = COUNTING) {
@@ -72,10 +74,11 @@ describe("the test game", () => {
     expect(testGame.result(b)).toEqual(game.result(a));
   });
 
-  it("takes {round: s} in the count-in, once: everyone is told, every snapshot carries it, and time is called then", () => {
+  it("takes {round: s} in the count-in: everyone is told, every snapshot carries it, and time is called then", () => {
     const state = testGame.create({ seed: 9, seats: SEATS, now: 0, round: 1 });
     testGame.input(state, 0, { round: 20 }, COUNTING);
-    testGame.input(state, 1, { round: 30 }, COUNTING + 100); // a second ask is ignored
+    testGame.input(state, 1, { round: 30 }, COUNTING + 100); // longer than the round is now: ignored
+    testGame.input(state, 1, { round: 20 }, COUNTING + 200); // the same again: nothing new to tell
     expect(state.roundSeconds).toBe(20);
     expect(Object.values(state.stalls).every((sim) => sim.roundSeconds === 20)).toBe(true);
     expect(testGame.snapshot(state, COUNTING).roundSeconds).toBe(20);
@@ -90,10 +93,36 @@ describe("the test game", () => {
     expect(testGame.isOver(state)).toBe(true);
   });
 
-  it("refuses a short round after the opening bell, of a length it does not allow, or from no seat", () => {
+  it("cuts a round short mid-round, to a time call at least a second ahead of the room's clock, and only shorter", () => {
+    const state = testGame.create({ seed: 9, seats: SEATS, now: 0 });
+    const at = (t) => (COUNT_IN + t) * 1000;
+    const events = [];
+    for (let now = COUNTING; now < at(24); now += 33) {
+      for (const s of state.seats) for (const input of testGame.bot(state, s.seat, now)) testGame.input(state, s.seat, input, now);
+      events.push(...testGame.tick(state, now));
+    }
+    expect(state.endAt).toBeNull();
+    testGame.input(state, 0, { round: 24 }, at(24)); // not a second ahead: refused
+    expect(state.roundSeconds).toBe(ROUND_SECONDS);
+    testGame.input(state, 1, { round: 26 }, at(24));
+    expect(state.roundSeconds).toBe(26);
+    testGame.input(state, 1, { round: 40 }, at(24.1)); // never longer again
+    expect(state.roundSeconds).toBe(26);
+    events.push(...play(testGame, state, at(24) + 33));
+    expect(events.filter((e) => e.k === "round")).toEqual([{ k: "round", s: 26 }]);
+    const time = events.find((e) => e.k === "time");
+    expect(time.t).toBeGreaterThanOrEqual(26);
+    expect(time.t).toBeLessThan(26.05);
+    expect(events.filter((e) => e.k === "fire").every((e) => e.t < 26)).toBe(true);
+    // After time is called, nothing more is taken.
+    testGame.input(state, 0, { round: 20 }, at(1));
+    expect(state.roundSeconds).toBe(26);
+  });
+
+  it("refuses a length it does not allow, or an ask from no seat", () => {
     const late = testGame.create({ seed: 9, seats: SEATS, now: 0 });
-    testGame.input(late, 0, { round: 20 }, COUNT_IN * 1000 + 10);
-    expect(roundTime(late, COUNT_IN * 1000 + 10)).toBeGreaterThan(0);
+    testGame.input(late, 0, { round: 20 }, at20());
+    expect(roundTime(late, at20())).toBeGreaterThan(19);
     for (const value of [19, 91, 20.5, "20", null, -1]) {
       const st = testGame.create({ seed: 9, seats: SEATS, now: 0 });
       testGame.input(st, 0, { round: value }, COUNTING);
