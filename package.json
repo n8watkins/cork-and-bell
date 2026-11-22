@@ -37,7 +37,7 @@
     "fps": "node tools/gpu-fps.mjs",
     "release": "release-kit release",
     "release:check": "release-kit check && npm test && npm run build",
-    "prepare": "git config core.hooksPath .githooks || true"
+    "hooks": "git config core.hooksPath .githooks"
   },
   "devDependencies": {
     "n8-party-games": "github:n8watkins/n8-party-games#612b83fa2c6d99b2bc8036cef6a4571d2ae275ba",

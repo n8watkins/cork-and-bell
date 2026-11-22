@@ -1,5 +1,9 @@
 # Agent instructions
 
+- After cloning, run `npm run hooks` once: it turns on the commit and push hooks (`.githooks`).
+  It is not a `prepare` script on purpose: the party site installs this package as a git dependency, and npm would run (and hold back with a warning) an install script there.
+  Re-running `npx release-kit apply .` adds a `prepare` script and `.github/workflows/auto-merge.yml` back; take both out again.
+
 <!-- release-kit -->
 ## Commits and releases
 
