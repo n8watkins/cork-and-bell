@@ -117,7 +117,7 @@ let bannerAttack = null;
 let autoStart = null;
 let openedOnce = false;
 const moments = [];
-const botState = { bots: {}, botSkill: 0.8, delay: 0 };
+const botState = { bots: {}, botSkill: 0.8, delay: 0, roundSeconds: ROUND_SECONDS };
 
 // ------------------------------------------------------------------ loading
 

@@ -140,6 +140,18 @@ describe("the test game", () => {
     expect(st.picks[0]).toBe(1);
     expect(st.roundSeconds).toBe(ROUND_SECONDS);
   });
+
+  it("takes only a bare {round: s}: one with any other key is not an ask", () => {
+    for (const data of [{ round: 30, q: 1 }, { round: 30, x: 0 }, { round: 30, f: "no" }, Object.assign([30], { round: 30 })]) {
+      const st = testGame.create({ seed: 9, seats: SEATS, now: 0 });
+      testGame.input(st, 0, data, COUNTING);
+      expect(st.roundSeconds, JSON.stringify(data)).toBe(ROUND_SECONDS);
+      expect(st.out.some((e) => e.k === "round")).toBe(false);
+    }
+    const bare = testGame.create({ seed: 9, seats: SEATS, now: 0 });
+    testGame.input(bare, 0, { round: 30 }, COUNTING);
+    expect(bare.roundSeconds).toBe(30);
+  });
 });
 
 describe("a page in a short round", () => {

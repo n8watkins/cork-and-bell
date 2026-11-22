@@ -290,7 +290,7 @@ export const game = {
   bot(state, seat, now) {
     const sim = state.stalls[seat];
     const t = roundTime(state, now) - state.delay;
-    if (!sim || t < 0.4 || t >= (state.roundSeconds ?? ROUND_SECONDS) || sim.over || sim.corksLeft <= 0) return [];
+    if (!sim || t < 0.4 || t >= state.roundSeconds || sim.over || sim.corksLeft <= 0) return [];
     const b = (state.bots[seat] ??= { next: 0.5 + hash(state.seed, seat * 977) * 0.8, n: 0 });
     if (t < b.next) return [];
     const r = (k) => hash(state.seed ^ (seat * 7919), b.n * 16 + k);
@@ -452,7 +452,9 @@ export const testGame = {
     return state;
   },
   input(state, seat, data, now) {
-    if (data && typeof data === "object" && "round" in data && !("f" in data) && !("pick" in data)) {
+    // Only a bare {round: s} is an ask; anything else (a cork or a pick that also carries a
+    // `round`, or a `round` with any other key) goes to the game as production's would take it.
+    if (data && typeof data === "object" && !Array.isArray(data) && Object.keys(data).length === 1 && "round" in data) {
       if (state.stalls[seat]) takeRound(state, data.round, now);
       return;
     }
