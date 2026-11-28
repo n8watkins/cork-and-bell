@@ -42,7 +42,7 @@
   "devDependencies": {
     "n8-party-games": "github:n8watkins/n8-party-games#612b83fa2c6d99b2bc8036cef6a4571d2ae275ba",
     "playwright": "^1.64.1",
-    "release-kit": "github:n8watkins/release-kit#v2.10.1",
+    "release-kit": "github:n8watkins/release-kit#v2.12.0",
     "three": "^0.186.0",
     "vitest": "4.1",
     "wrangler": "^4.157.0"
